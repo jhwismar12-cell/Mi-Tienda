@@ -1,0 +1,6 @@
+{
+  "name": "Mi Tienda Familiar",
+  "description": "Sistema completo de Punto de Venta (POS), Inventario, Kardex detallado, Recepción de Mercancías y Arqueo de Caja.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
