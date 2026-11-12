@@ -1,0 +1,12 @@
+.git/
+node_modules/
+tests/
+backups/
+*.db
+*.db-wal
+*.db-shm
+catalogo_productos_*.xlsx
+catalogo_productos_*.csv
+__pycache__/
+*.pyc
+.agents/

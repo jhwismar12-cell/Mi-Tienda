@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from backend.database import get_db, DB_PATH, PROJECT_ROOT
+from backend.database import get_db, DB_PATH, PROJECT_ROOT, get_backup_dir
 from backend.auth import hash_password, unusable_password, validate_new_password
 from backend.models import (
     ProductoOut, ProductoCreate, ProductoUpdate, ProductoRapidoRequest,
@@ -961,7 +961,7 @@ def obtener_dashboard_kpis() -> DashboardKPIsOut:
 
 # --- Backup Generator ---
 def generar_backup_database() -> BackupResponse:
-    backup_dir = os.path.join(PROJECT_ROOT, "backups")
+    backup_dir = get_backup_dir()
     os.makedirs(backup_dir, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

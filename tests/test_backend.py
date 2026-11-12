@@ -673,6 +673,39 @@ class TestTiendaBackend(unittest.TestCase):
             429
         )
 
+    def test_32_vercel_entrypoint_y_supabase_sync(self):
+        # 1. Verifica que api/index.py expone la app FastAPI para Vercel
+        import api.index as vercel_entry
+        self.assertIs(vercel_entry.app, app)
+
+        # 2. Verifica empaquetado de snapshot y actualizacion de version en Supabase Sync (sin red real)
+        from backend import supabase_sync
+        called_rpcs = []
+
+        def fake_rpc(fn_name, payload, timeout=8.0):
+            called_rpcs.append((fn_name, payload))
+            if fn_name == "guardar_estado_tienda":
+                return {"ok": True, "version": 7}
+            if fn_name == "obtener_version_tienda":
+                return {"found": True, "version": 7}
+            return {}
+
+        with patch.dict(os.environ, {
+            "SUPABASE_URL": "https://ejemplo.supabase.co",
+            "SUPABASE_KEY": "sb_publishable_demo",
+            "SUPABASE_SYNC_SECRET": "secreto_test",
+            "TIENDA_SLUG": "Tienda Norte 01"
+        }):
+            self.assertEqual(supabase_sync.get_store_slug(), "tienda-norte-01")
+            with patch.object(supabase_sync, "_rpc_call", side_effect=fake_rpc):
+                ok = supabase_sync.push_db_to_supabase(services.DB_PATH)
+                self.assertTrue(ok)
+                self.assertEqual(called_rpcs[0][0], "guardar_estado_tienda")
+                self.assertEqual(called_rpcs[0][1]["p_slug"], "tienda-norte-01")
+                self.assertGreaterEqual(len(called_rpcs[0][1]["p_usuarios"]), 2)
+                # Version local queda en 7, asi que pull_if_newer no descarga redundante
+                self.assertFalse(supabase_sync.pull_if_newer(services.DB_PATH))
+
 if __name__ == "__main__":
     unittest.main()
 

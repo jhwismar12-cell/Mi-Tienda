@@ -1,17 +1,31 @@
 import sqlite3
 import os
 import secrets
+import tempfile
 from typing import Generator
 from contextlib import contextmanager
 
 from backend.auth import hash_password, unusable_password, is_default_password, verify_password
+from backend.supabase_sync import (
+    get_store_slug,
+    is_supabase_enabled,
+    pull_db_from_supabase,
+    pull_if_newer,
+    push_db_to_supabase,
+)
 
 # Claves de configuracion que nunca se envian al navegador.
 CLAVES_CONFIG_PRIVADAS = {"SECRET_KEY", "GEMINI_API_KEY"}
 
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(DB_DIR, ".."))
-DB_PATH = os.environ.get("TIENDA_DB_PATH") or os.path.join(PROJECT_ROOT, "tienda.db")
+_DEFAULT_DB_PATH = (
+    os.path.join(tempfile.gettempdir(), f"tienda_{get_store_slug()}.db")
+    if os.environ.get("VERCEL")
+    else os.path.join(PROJECT_ROOT, "tienda.db")
+)
+DB_PATH = os.environ.get("TIENDA_DB_PATH") or _DEFAULT_DB_PATH
+_SYNCING_LOCK = False
 
 DDL_SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -282,6 +296,26 @@ CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON VENTAS(FechaHora);
 -- 13. INDICES Y CONFIGURACION ADICIONAL
 """
 
+def _should_sync_cloud() -> bool:
+    global _SYNCING_LOCK
+    if _SYNCING_LOCK or not is_supabase_enabled():
+        return False
+    # No sincronizar bases temporales de tests unitarios
+    return os.path.abspath(DB_PATH) == os.path.abspath(_DEFAULT_DB_PATH)
+
+def get_backup_dir() -> str:
+    if os.environ.get("VERCEL"):
+        return os.path.join(tempfile.gettempdir(), f"tienda_backups_{get_store_slug()}")
+    return os.path.join(PROJECT_ROOT, "backups")
+
+def ensure_fresh_cloud_db() -> None:
+    if not _should_sync_cloud():
+        return
+    if not os.path.exists(DB_PATH):
+        init_db()
+    else:
+        pull_if_newer(DB_PATH)
+
 def get_db_connection():
     db_dir = os.path.dirname(os.path.abspath(DB_PATH))
     if db_dir:
@@ -295,17 +329,30 @@ def get_db_connection():
 
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
+    if not os.path.exists(DB_PATH) and _should_sync_cloud():
+        init_db()
     conn = get_db_connection()
+    changes_before = conn.total_changes
+    had_writes = False
     try:
         yield conn
+        had_writes = conn.total_changes > changes_before
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+    if had_writes and _should_sync_cloud():
+        push_db_to_supabase(DB_PATH)
 
 def init_db():
+    global _SYNCING_LOCK
+    pulled = False
+    if _should_sync_cloud() and not os.path.exists(DB_PATH):
+        pulled = pull_db_from_supabase(DB_PATH)
+
+    _SYNCING_LOCK = True
     conn = get_db_connection()
     try:
         conn.executescript(DDL_SCHEMA)
@@ -322,6 +369,10 @@ def init_db():
         bootstrap_security(conn)
     finally:
         conn.close()
+        _SYNCING_LOCK = False
+
+    if _should_sync_cloud() and not pulled:
+        push_db_to_supabase(DB_PATH)
 
 
 def es_produccion() -> bool:

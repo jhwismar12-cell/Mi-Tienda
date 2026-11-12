@@ -8,7 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
-from backend.database import init_db, get_db, get_secret_key, CLAVES_CONFIG_PRIVADAS, PROJECT_ROOT
+from backend.database import (
+    init_db, get_db, get_secret_key, CLAVES_CONFIG_PRIVADAS, PROJECT_ROOT,
+    ensure_fresh_cloud_db, get_backup_dir
+)
 from backend.auth import (
     hash_password, verify_password, needs_rehash, is_default_password, validate_new_password,
     create_token, decode_token, password_fingerprint, check_lock, register_failure, clear_failures
@@ -86,21 +89,24 @@ def _resolve_user_from_token(token: str) -> Optional[UserInfo]:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if request.method != "OPTIONS" and path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
-        auth_header = request.headers.get("Authorization", "")
-        token = ""
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        elif "token" in request.query_params:
-            token = request.query_params["token"].strip()
+    if request.method != "OPTIONS" and path.startswith("/api/"):
+        if path != "/api/health":
+            ensure_fresh_cloud_db()
+        if path not in _PUBLIC_API_PATHS:
+            auth_header = request.headers.get("Authorization", "")
+            token = ""
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:].strip()
+            elif "token" in request.query_params:
+                token = request.query_params["token"].strip()
 
-        user = _resolve_user_from_token(token) if token else None
-        if not user:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "No autenticado o sesion expirada. Inicia sesion nuevamente."}
-            )
-        request.state.user = user
+            user = _resolve_user_from_token(token) if token else None
+            if not user:
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "No autenticado o sesion expirada. Inicia sesion nuevamente."}
+                )
+            request.state.user = user
     return await call_next(request)
 
 def get_current_user(request: Request) -> UserInfo:
@@ -530,10 +536,11 @@ def generar_backup_endpoint():
 
 @app.get("/api/backups/descargar/{filename}", tags=["Backups"])
 def descargar_backup(filename: str):
-    file_path = os.path.join(PROJECT_ROOT, "backups", filename)
+    safe_name = os.path.basename(filename)
+    file_path = os.path.join(get_backup_dir(), safe_name)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Archivo de backup no encontrado.")
-    return FileResponse(file_path, media_type="application/gzip", filename=filename)
+    return FileResponse(file_path, media_type="application/gzip", filename=safe_name)
 
 # --- 9. Auxiliary Entities Endpoints ---
 @app.get("/api/categorias", response_model=List[CategoriaOut], tags=["Auxiliares"])
