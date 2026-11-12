@@ -14,55 +14,55 @@ export const ReceiptModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl border border-[#cbd5e1] shadow-2xl max-w-sm w-full overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-sm w-full overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Top Bar */}
-        <div className="bg-[#006948] text-white px-5 py-3 flex items-center justify-between">
+        <div className="bg-[var(--ui-brand)] text-white px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-[#85f8c4]" />
+            <CheckCircle className="w-5 h-5 text-[var(--ui-mint)]" />
             <span className="font-bold text-sm">Venta Completada</span>
           </div>
           <button
             onClick={() => setIsReceiptModalOpen(false)}
-            className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/15 transition-colors"
+            className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-[var(--ui-surface)]/15 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Printable Thermal Receipt Container */}
-        <div className="p-6 overflow-y-auto bg-[#fafafa]">
+        <div className="p-6 overflow-y-auto bg-[var(--ui-surface-muted)]">
           <div
             ref={printRef}
-            className="bg-white p-5 border border-[#e2e8f0] shadow-xs rounded-lg font-mono text-xs text-[#1e293b] space-y-3 leading-tight print:border-none print:shadow-none"
+            className="receipt-paper bg-[var(--ui-surface)] p-5 border border-[var(--ui-border)] shadow-xs rounded-lg font-mono text-xs text-[var(--ui-text)] space-y-3 leading-tight print:border-none print:shadow-none"
           >
             {/* Store Header */}
-            <div className="text-center space-y-1 border-b border-dashed border-[#cbd5e1] pb-3">
-              <h2 className="font-bold text-sm text-[#006948] uppercase tracking-wider font-sans">
+            <div className="text-center space-y-1 border-b border-dashed border-[var(--ui-border)] pb-3">
+              <h2 className="font-bold text-sm text-[var(--ui-brand-strong)] uppercase tracking-wider font-sans">
                 MI TIENDA FAMILIAR
               </h2>
-              <p className="text-[10px] text-[#64748b]">RUC: 1792348590001</p>
-              <p className="text-[10px] text-[#64748b]">Av. Amazonas y Naciones Unidas</p>
-              <p className="text-[10px] text-[#64748b]">Tel: (02) 245-8900</p>
-              <div className="pt-1 text-[11px] font-bold text-[#111c2d]">
+              <p className="text-[10px] text-[var(--ui-muted)]">RUC: 1792348590001</p>
+              <p className="text-[10px] text-[var(--ui-muted)]">Av. Amazonas y Naciones Unidas</p>
+              <p className="text-[10px] text-[var(--ui-muted)]">Tel: (02) 245-8900</p>
+              <div className="pt-1 text-[11px] font-bold text-[var(--ui-text)]">
                 COMPROBANTE DE VENTA
               </div>
             </div>
 
             {/* Ticket Info */}
-            <div className="flex justify-between text-[11px] text-[#475569] border-b border-dashed border-[#cbd5e1] pb-2">
+            <div className="flex justify-between text-[11px] text-[var(--ui-secondary)] border-b border-dashed border-[var(--ui-border)] pb-2">
               <div>
                 <p>Ticket: <strong>{lastCompletedSale.ticketNumber}</strong></p>
                 <p>Fecha: {lastCompletedSale.date}</p>
               </div>
               <div className="text-right">
                 <p>Hora: {lastCompletedSale.time}</p>
-                <p>Caja: {lastCompletedSale.cashierName}</p>
+                <p>A cargo: <strong>{lastCompletedSale.cashierName || 'Wismar'}</strong></p>
               </div>
             </div>
 
             {/* Items List */}
-            <div className="space-y-1.5 border-b border-dashed border-[#cbd5e1] pb-3">
-              <div className="grid grid-cols-12 font-bold text-[10px] text-[#64748b] uppercase">
+            <div className="space-y-1.5 border-b border-dashed border-[var(--ui-border)] pb-3">
+              <div className="grid grid-cols-12 font-bold text-[10px] text-[var(--ui-muted)] uppercase">
                 <span className="col-span-6">Desc</span>
                 <span className="col-span-2 text-center">Cant</span>
                 <span className="col-span-2 text-right">P.U</span>
@@ -79,26 +79,26 @@ export const ReceiptModal: React.FC = () => {
             </div>
 
             {/* Financial Summary */}
-            <div className="space-y-1 border-b border-dashed border-[#cbd5e1] pb-2 text-xs">
+            <div className="space-y-1 border-b border-dashed border-[var(--ui-border)] pb-2 text-xs">
               <div className="flex justify-between">
                 <span>Total Artículos:</span>
                 <span>{lastCompletedSale.totalArticles} ({lastCompletedSale.totalUnits} un)</span>
               </div>
-              <div className="flex justify-between font-bold text-sm pt-1 text-[#006948]">
+              <div className="flex justify-between font-bold text-sm pt-1 text-[var(--ui-brand-strong)]">
                 <span>TOTAL PAGADO:</span>
                 <span>$ {lastCompletedSale.subtotal.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-[11px] text-[#64748b] pt-1">
+              <div className="flex justify-between text-[11px] text-[var(--ui-muted)] pt-1">
                 <span>Método de Pago:</span>
                 <span className="uppercase font-semibold">{lastCompletedSale.paymentMethod === 'cash' ? 'Efectivo' : 'Transferencia'}</span>
               </div>
               {lastCompletedSale.cashReceived !== undefined && (
                 <>
-                  <div className="flex justify-between text-[11px] text-[#64748b]">
+                  <div className="flex justify-between text-[11px] text-[var(--ui-muted)]">
                     <span>Efectivo Recibido:</span>
                     <span>$ {lastCompletedSale.cashReceived.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-[11px] font-bold text-[#047857]">
+                  <div className="flex justify-between text-[11px] font-bold text-[var(--ui-brand-strong)]">
                     <span>Cambio / Vuelto:</span>
                     <span>$ {(lastCompletedSale.change || 0).toFixed(2)}</span>
                   </div>
@@ -108,10 +108,10 @@ export const ReceiptModal: React.FC = () => {
 
             {/* Barcode & Footer Greeting */}
             <div className="text-center pt-2 space-y-2">
-              <div className="inline-block px-4 py-1.5 bg-[#f1f5f9] rounded border border-[#cbd5e1] tracking-widest text-xs font-mono font-bold">
+              <div className="inline-block px-4 py-1.5 bg-[var(--ui-surface-hover)] rounded border border-[var(--ui-border)] tracking-widest text-xs font-mono font-bold">
                 * {lastCompletedSale.ticketNumber} *
               </div>
-              <p className="text-[10px] text-[#64748b] italic">
+              <p className="text-[10px] text-[var(--ui-muted)] italic">
                 ¡Gracias por su compra en Mi Tienda Familiar!
               </p>
             </div>
@@ -119,18 +119,18 @@ export const ReceiptModal: React.FC = () => {
         </div>
 
         {/* Modal Actions */}
-        <div className="p-4 bg-white border-t border-[#cbd5e1] flex gap-2">
+        <div className="p-4 bg-[var(--ui-surface)] border-t border-[var(--ui-border)] flex gap-2">
           <button
             onClick={() => setIsReceiptModalOpen(false)}
-            className="flex-1 py-2.5 px-3 bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] font-bold rounded-xl text-xs transition-colors"
+            className="flex-1 py-2.5 px-3 bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] font-bold rounded-xl text-xs transition-colors"
           >
             Nueva Venta
           </button>
           <button
             onClick={handlePrint}
-            className="flex-1 py-2.5 px-3 bg-[#006948] hover:bg-[#005137] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+            className="flex-1 py-2.5 px-3 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
           >
-            <Printer className="w-4 h-4 text-[#85f8c4]" />
+            <Printer className="w-4 h-4 text-[var(--ui-mint)]" />
             <span>Imprimir Ticket</span>
           </button>
         </div>

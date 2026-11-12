@@ -1,6 +1,36 @@
-export type ScreenType = 'pos' | 'inventory' | 'reception' | 'kardex' | 'reports' | 'settings';
+export type ScreenType = 'pos' | 'inventory' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
 
-export type Category = 'Abarrotes' | 'Lácteos' | 'Bebidas' | 'Limpieza' | 'Snacks' | 'Panadería' | 'Embutidos';
+export type Category = 'Abarrotes' | 'Lácteos' | 'Bebidas' | 'Limpieza' | 'Snacks' | 'Panadería' | 'Embutidos' | 'Condimentos' | 'Hogar';
+
+export type OrderStatus = 'PENDIENTE' | 'RECIBIDO' | 'CANCELADO';
+
+export interface PurchaseOrderItem {
+  id: string;
+  productId: string;
+  code: string;
+  name: string;
+  quantityOrdered: number;
+  estimatedCost: number;
+  subtotal: number;
+  category?: string;
+  barcode?: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  orderNumber: string;
+  providerId?: number;
+  providerName: string;
+  date: string; // YYYY-MM-DD
+  expectedDeliveryDate?: string;
+  status: OrderStatus;
+  items: PurchaseOrderItem[];
+  totalUnits: number;
+  totalAmount: number;
+  notes?: string;
+  receivedInvoiceNumber?: string;
+  receivedDate?: string;
+}
 
 export interface Product {
   id: string;
@@ -12,6 +42,8 @@ export interface Product {
   stock: number;
   minStock: number;
   barcode?: string;
+  distributor?: string;
+  providerId?: number;
   unit?: string;
   lastUpdated?: string;
 }
@@ -50,7 +82,7 @@ export interface Sale {
   cashierName: string;
 }
 
-export type KardexType = 'INICIAL' | 'COMPRA' | 'VENTA' | 'VENTA MAYORISTA' | 'DAÑO' | 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO';
+export type KardexType = 'INICIAL' | 'COMPRA' | 'VENTA' | 'VENTA MAYORISTA' | 'DAÑO' | 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DEVOLUCION_CLIENTE' | 'DEVOLUCION';
 
 export interface KardexMovement {
   id: string;
@@ -80,6 +112,7 @@ export interface ReceptionDraftItem {
 
 export interface ReceptionInvoice {
   id: string;
+  providerId: number;
   provider: string;
   invoiceNumber: string;
   date: string;
@@ -99,6 +132,7 @@ export interface CashMovement {
 }
 
 export interface CashShift {
+  sessionId?: number;
   isOpen: boolean;
   openedAt: string;
   cashierName: string;
@@ -111,3 +145,23 @@ export interface CashShift {
   countedCash: number;
   movements: CashMovement[];
 }
+
+export interface Worker {
+  id: number;
+  name: string;
+  username: string;
+  role: string;
+  active: boolean;
+  createdAt?: string;
+  canLogin?: boolean;
+}
+
+export interface AuthUser {
+  id_usuario: number;
+  username: string;
+  nombre_completo: string;
+  id_role: number;
+  role_name: string;
+  debe_cambiar_clave?: boolean;
+}
+

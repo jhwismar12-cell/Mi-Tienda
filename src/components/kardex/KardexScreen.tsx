@@ -82,39 +82,40 @@ export const KardexScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white select-none">
+    <div className="workspace-screen flex-1 flex flex-col h-full overflow-hidden bg-[var(--ui-surface)] select-none">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-[#cbd5e1] bg-white shrink-0">
+      <div className="px-6 py-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface)] shrink-0">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
           <div>
-            <h1 className="font-bold text-xl md:text-2xl text-[#111c2d]">
+            <p className="workspace-eyebrow">Trazabilidad del inventario</p>
+            <h1 className="workspace-heading font-bold text-xl md:text-2xl text-[var(--ui-text)]">
               Kardex General de Movimientos
             </h1>
-            <p className="text-xs md:text-sm text-[#64748b] mt-0.5">
+            <p className="text-xs md:text-sm text-[var(--ui-muted)] mt-0.5">
               Auditoría y trazabilidad completa de entradas, salidas, ventas y mermas.
             </p>
           </div>
 
           <button
             onClick={handleExportKardex}
-            className="bg-white border border-[#cbd5e1] hover:bg-[#f1f5f9] text-[#111c2d] px-4 py-2 rounded-lg text-xs md:text-sm font-semibold flex items-center gap-2 shadow-xs transition-colors"
+            className="bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] px-4 py-2 rounded-lg text-xs md:text-sm font-semibold flex items-center gap-2 shadow-xs transition-colors"
           >
-            <Download className="w-4 h-4 text-[#64748b]" />
+            <Download className="w-4 h-4 text-[var(--ui-muted)]" />
             <span>Exportar Kardex (CSV)</span>
           </button>
         </div>
 
         {/* Filters */}
-        <div className="mt-4 flex flex-wrap items-center gap-3 bg-[#f8fafc] p-2.5 rounded-xl border border-[#cbd5e1]">
+        <div className="mt-4 flex flex-wrap items-center gap-3 bg-[var(--ui-surface-muted)] p-2.5 rounded-xl border border-[var(--ui-border)]">
           {/* Search */}
           <div className="flex-1 min-w-[220px] relative">
-            <Search className="w-4 h-4 text-[#94a3b8] absolute left-3 top-2.5" />
+            <Search className="w-4 h-4 text-[var(--ui-subtle)] absolute left-3 top-2.5" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Buscar por producto, código, documento o responsable..."
-              className="w-full bg-white border border-[#cbd5e1] rounded-lg pl-9 pr-3 py-1.5 text-xs md:text-sm text-[#111c2d] outline-none focus:border-[#316bf3]"
+              className="w-full bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg pl-9 pr-3 py-1.5 text-xs md:text-sm text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
             />
           </div>
 
@@ -123,7 +124,7 @@ export const KardexScreen: React.FC = () => {
             <select
               value={selectedType}
               onChange={(e) => setSelectedType(e.target.value)}
-              className="w-full bg-white border border-[#cbd5e1] rounded-lg px-3 py-1.5 text-xs md:text-sm text-[#111c2d] outline-none focus:border-[#316bf3]"
+              className="w-full bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg px-3 py-1.5 text-xs md:text-sm text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
             >
               {movementTypes.map(t => (
                 <option key={t.id} value={t.id}>{t.label}</option>
@@ -136,7 +137,7 @@ export const KardexScreen: React.FC = () => {
             <select
               value={selectedProductFilter}
               onChange={(e) => setSelectedProductFilter(e.target.value)}
-              className="w-full bg-white border border-[#cbd5e1] rounded-lg px-3 py-1.5 text-xs md:text-sm text-[#111c2d] outline-none focus:border-[#316bf3]"
+              className="w-full bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg px-3 py-1.5 text-xs md:text-sm text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
             >
               <option value="all">Todos los productos</option>
               {products.map(p => (
@@ -148,10 +149,10 @@ export const KardexScreen: React.FC = () => {
       </div>
 
       {/* Main Table */}
-      <div className="flex-1 overflow-auto bg-white">
-        <table className="w-full text-left border-collapse">
-          <thead className="sticky top-0 bg-[#f1f5f9] z-10 shadow-[0_1px_0_0_#cbd5e1]">
-            <tr className="font-mono text-[11px] md:text-xs font-bold text-[#64748b] uppercase tracking-wider">
+      <div className="flex-1 overflow-auto bg-[var(--ui-surface)]">
+        <table className="kardex-table w-full text-left border-collapse">
+          <thead className="table-heading sticky top-0 bg-[var(--ui-surface-hover)] z-10">
+            <tr className="font-mono text-[11px] md:text-xs font-bold text-[var(--ui-muted)] uppercase tracking-wider">
               <th className="px-4 py-2.5">Fecha & Hora</th>
               <th className="px-4 py-2.5">Producto</th>
               <th className="px-4 py-2.5">Tipo Movimiento</th>
@@ -162,10 +163,10 @@ export const KardexScreen: React.FC = () => {
               <th className="px-4 py-2.5">Observaciones</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#e2e8f0] text-xs md:text-sm">
+          <tbody className="divide-y divide-[var(--ui-border)] text-xs md:text-sm">
             {filteredMovements.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-[#94a3b8]">
+                <td colSpan={8} className="py-12 text-center text-[var(--ui-subtle)]">
                   No se encontraron registros de Kardex con los filtros seleccionados.
                 </td>
               </tr>
@@ -175,29 +176,29 @@ export const KardexScreen: React.FC = () => {
                 const isNegative = mov.quantityChange < 0;
 
                 return (
-                  <tr key={mov.id} className="hover:bg-[#f8fafc] transition-colors">
+                  <tr key={mov.id} className="hover:bg-[var(--ui-surface-muted)] transition-colors">
                     {/* Date / Time */}
-                    <td className="px-4 py-2.5 font-mono text-xs text-[#64748b] whitespace-nowrap">
+                    <td className="px-4 py-2.5 font-mono text-xs text-[var(--ui-muted)] whitespace-nowrap">
                       {mov.date} {mov.time}
                     </td>
 
                     {/* Product */}
-                    <td className="px-4 py-2.5 font-semibold text-[#111c2d]">
+                    <td className="px-4 py-2.5 font-semibold text-[var(--ui-text)]">
                       <div>{mov.productName}</div>
-                      <div className="font-mono text-[11px] text-[#64748b] font-normal">{mov.productCode}</div>
+                      <div className="font-mono text-[11px] text-[var(--ui-muted)] font-normal">{mov.productCode}</div>
                     </td>
 
                     {/* Type badge */}
                     <td className="px-4 py-2.5">
                       <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold ${
+                        className={`status-pill inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold ${
                           mov.type === 'INICIAL'
-                            ? 'bg-[#f1f5f9] text-[#475569] border border-[#cbd5e1]'
+                            ? 'bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] border border-[var(--ui-border)]'
                             : mov.type === 'COMPRA'
-                            ? 'bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]'
+                            ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]'
                             : mov.type === 'DAÑO'
-                            ? 'bg-[#fef2f2] text-[#dc2626] border border-[#fecaca]'
-                            : 'bg-[#eff6ff] text-[#2563eb] border border-[#bfdbfe]'
+                            ? 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border border-[var(--ui-danger-border)]'
+                            : 'bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)]'
                         }`}
                       >
                         {mov.type}
@@ -205,33 +206,33 @@ export const KardexScreen: React.FC = () => {
                     </td>
 
                     {/* Doc */}
-                    <td className="px-4 py-2.5 font-mono text-xs text-[#334155]">
+                    <td className="px-4 py-2.5 font-mono text-xs text-[var(--ui-secondary)]">
                       {mov.docNumber}
                     </td>
 
                     {/* Responsible */}
-                    <td className="px-4 py-2.5 text-xs text-[#64748b]">
+                    <td className="px-4 py-2.5 text-xs text-[var(--ui-muted)]">
                       {mov.responsible}
                     </td>
 
                     {/* Variation */}
                     <td className="px-4 py-2.5 text-right font-mono font-bold text-xs md:text-sm">
                       {isPositive ? (
-                        <span className="text-[#059669]">+{mov.quantityChange}</span>
+                        <span className="text-[var(--ui-brand-strong)]">+{mov.quantityChange}</span>
                       ) : isNegative ? (
-                        <span className="text-[#dc2626]">{mov.quantityChange}</span>
+                        <span className="text-[var(--ui-danger-text)]">{mov.quantityChange}</span>
                       ) : (
-                        <span className="text-[#64748b]">0</span>
+                        <span className="text-[var(--ui-muted)]">0</span>
                       )}
                     </td>
 
                     {/* Balance */}
-                    <td className="px-4 py-2.5 text-right font-mono font-bold text-xs md:text-sm text-[#111c2d]">
+                    <td className="px-4 py-2.5 text-right font-mono font-bold text-xs md:text-sm text-[var(--ui-text)]">
                       {mov.balance} un
                     </td>
 
                     {/* Notes */}
-                    <td className="px-4 py-2.5 text-xs text-[#64748b] italic max-w-xs truncate">
+                    <td className="px-4 py-2.5 text-xs text-[var(--ui-muted)] italic max-w-xs truncate">
                       {mov.notes || '-'}
                     </td>
                   </tr>

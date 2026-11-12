@@ -6,3 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+backups/
+.agents/
+catalogo_productos_*.xlsx
+catalogo_productos_*.csv

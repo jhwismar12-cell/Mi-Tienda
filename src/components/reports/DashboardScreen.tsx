@@ -13,7 +13,16 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
-  Download
+  Download,
+  Edit2,
+  DollarSign,
+  X,
+  Save,
+  RotateCcw,
+  Search,
+  Eye,
+  User,
+  ShoppingBag
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 
@@ -23,29 +32,46 @@ export const DashboardScreen: React.FC = () => {
     sales,
     cashShift,
     setCountedCash,
+    updateInitialCash,
     closeShiftAndGenerateReport,
     setIsCashMovementModalOpen,
+    setLastCompletedSale,
+    setIsReceiptModalOpen,
     showToast
   } = useStore();
 
   const [inputCountedCash, setInputCountedCash] = useState<string>(
     cashShift.countedCash.toFixed(2)
   );
+  const [salesSearchTerm, setSalesSearchTerm] = useState('');
 
-  // Live Calculations
-  const todaySalesTotal = useMemo(() => {
-    return Number(sales.reduce((sum, s) => sum + s.subtotal, 0).toFixed(2));
+  // Edit Initial Cash Modal State
+  const [isEditInitialCashModalOpen, setIsEditInitialCashModalOpen] = useState(false);
+  const [editInitialCashValue, setEditInitialCashValue] = useState<string>(
+    cashShift.initialCash.toFixed(2)
+  );
+
+  // Live Calculations (only today's sales; `sales` also holds history from previous days)
+  const todaySales = useMemo(() => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    return sales.filter(s => s.date === todayStr);
   }, [sales]);
+
+  const todaySalesTotal = useMemo(() => {
+    return Number(todaySales.reduce((sum, s) => sum + s.subtotal, 0).toFixed(2));
+  }, [todaySales]);
 
   const grossProfit = useMemo(() => {
     let profit = 0;
-    sales.forEach(s => {
+    todaySales.forEach(s => {
       s.items.forEach(it => {
         profit += (it.unitPrice - (it.costPrice || it.unitPrice * 0.7)) * it.quantity;
       });
     });
     return Number(profit.toFixed(2));
-  }, [sales]);
+  }, [todaySales]);
 
   const inventoryCostValue = useMemo(() => {
     return Number(products.reduce((sum, p) => sum + p.costPrice * p.stock, 0).toFixed(2));
@@ -59,6 +85,16 @@ export const DashboardScreen: React.FC = () => {
     return products.filter(p => p.stock === 0).length;
   }, [products]);
 
+  const filteredSales = useMemo(() => {
+    if (!salesSearchTerm.trim()) return sales;
+    const term = salesSearchTerm.trim().toLowerCase();
+    return sales.filter(s =>
+      (s.ticketNumber && s.ticketNumber.toLowerCase().includes(term)) ||
+      (s.cashierName && s.cashierName.toLowerCase().includes(term)) ||
+      (s.date && s.date.includes(term))
+    );
+  }, [sales, salesSearchTerm]);
+
   const countedNum = parseFloat(inputCountedCash) || 0;
   const difference = Number((countedNum - cashShift.expectedCash).toFixed(2));
   const isPerfectMatch = Math.abs(difference) < 0.01;
@@ -66,15 +102,27 @@ export const DashboardScreen: React.FC = () => {
   const isSurplus = difference > 0.01;
 
   const handleCountedChange = (val: string) => {
-    setInputCountedChangeState(val);
+    setInputCountedCash(val);
     const parsed = parseFloat(val);
     if (!isNaN(parsed)) {
       setCountedCash(parsed);
     }
   };
 
-  const setInputCountedChangeState = (val: string) => {
-    setInputCountedCash(val);
+  const handleSaveInitialCash = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newAmt = parseFloat(editInitialCashValue);
+    if (isNaN(newAmt) || newAmt < 0) {
+      showToast('⚠️ El monto del fondo inicial debe ser un número válido mayor o igual a 0.');
+      return;
+    }
+
+    try {
+      await updateInitialCash(newAmt);
+      setIsEditInitialCashModalOpen(false);
+    } catch {
+      // Keep the form open; the store displays the error.
+    }
   };
 
   // Hourly sales chart simulation data
@@ -88,15 +136,16 @@ export const DashboardScreen: React.FC = () => {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[#f8fafc] select-none">
+    <div className="workspace-screen flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[var(--ui-surface-muted)] select-none">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Page Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-3">
           <div>
-            <h1 className="font-bold text-xl md:text-2xl text-[#111c2d]">
-              Dashboard & Arqueo de Caja
+            <p className="workspace-eyebrow mb-1">Resumen operativo</p>
+            <h1 className="workspace-heading font-bold text-xl md:text-2xl text-[var(--ui-text)]">
+              Reportes y arqueo de caja
             </h1>
-            <p className="text-xs md:text-sm text-[#64748b] mt-0.5">
+            <p className="text-xs md:text-sm text-[var(--ui-muted)] mt-0.5">
               Resumen del turno actual - {cashShift.cashierName} (Abierto {cashShift.openedAt})
             </p>
           </div>
@@ -104,13 +153,13 @@ export const DashboardScreen: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsCashMovementModalOpen(true)}
-              className="bg-white border border-[#cbd5e1] hover:bg-[#f1f5f9] text-[#111c2d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
+              className="bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5 text-[#006948]" />
+              <Plus className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
               <span>Registrar Retiro / Pago</span>
             </button>
 
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#fff8e1] text-[#b45309] border border-[#fde68a] rounded-lg text-xs font-bold shadow-2xs">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[var(--ui-warning-bg)] text-[var(--ui-warning-text)] border border-[var(--ui-warning-border)] rounded-lg text-xs font-bold shadow-2xs">
               <AlertTriangle className="w-3.5 h-3.5" />
               <span>{outOfStockCount > 0 ? `${outOfStockCount} Alertas de Stock` : 'Turno Normal'}</span>
             </span>
@@ -120,55 +169,55 @@ export const DashboardScreen: React.FC = () => {
         {/* KPI Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* KPI 1: Ventas de Hoy */}
-          <div className="bg-white border border-[#cbd5e1] rounded-xl p-4 flex flex-col justify-between shadow-xs">
-            <div className="text-[#64748b] text-xs font-medium mb-1.5 flex items-center gap-1.5">
-              <Banknote className="w-4 h-4 text-[#006948]" />
+          <div className="metric-card surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-4 flex flex-col justify-between shadow-xs">
+            <div className="text-[var(--ui-muted)] text-xs font-medium mb-1.5 flex items-center gap-1.5">
+              <Banknote className="w-4 h-4 text-[var(--ui-brand-strong)]" />
               <span>Ventas de Hoy</span>
             </div>
-            <div className="font-mono text-2xl font-bold text-[#111c2d]">
+            <div className="metric-value font-mono text-2xl font-bold text-[var(--ui-text)]">
               $ {todaySalesTotal.toFixed(2)}
             </div>
-            <div className="text-[11px] text-[#64748b] mt-1.5">
+            <div className="text-[11px] text-[var(--ui-muted)] mt-1.5">
               {sales.length} tickets emitidos
             </div>
           </div>
 
           {/* KPI 2: Ganancia Bruta */}
-          <div className="bg-white border border-[#cbd5e1] rounded-xl p-4 flex flex-col justify-between shadow-xs">
-            <div className="text-[#64748b] text-xs font-medium mb-1.5 flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-[#00855d]" />
+          <div className="metric-card surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-4 flex flex-col justify-between shadow-xs">
+            <div className="text-[var(--ui-muted)] text-xs font-medium mb-1.5 flex items-center gap-1.5">
+              <TrendingUp className="w-4 h-4 text-[var(--ui-brand-strong)]" />
               <span>Ganancia Bruta</span>
             </div>
-            <div className="font-mono text-2xl font-bold text-[#006948]">
+            <div className="metric-value font-mono text-2xl font-bold text-[var(--ui-brand-strong)]">
               $ {grossProfit.toFixed(2)}
             </div>
-            <div className="text-[11px] text-[#00855d] mt-1.5 font-bold">
+            <div className="text-[11px] text-[var(--ui-brand-strong)] mt-1.5 font-bold">
               +30% margen promedio
             </div>
           </div>
 
           {/* KPI 3: Valor Inventario (Costo / Venta) */}
-          <div className="bg-white border border-[#cbd5e1] rounded-xl p-4 flex flex-col justify-between sm:col-span-2 shadow-xs">
-            <div className="text-[#64748b] text-xs font-medium mb-1.5 flex items-center gap-1.5">
-              <Package className="w-4 h-4 text-[#316bf3]" />
+          <div className="metric-card surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-4 flex flex-col justify-between sm:col-span-2 shadow-xs">
+            <div className="text-[var(--ui-muted)] text-xs font-medium mb-1.5 flex items-center gap-1.5">
+              <Package className="w-4 h-4 text-[var(--ui-brand-strong)]" />
               <span>Valor Inventario (Costo / Venta)</span>
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="font-mono text-2xl font-bold text-[#64748b]">
+              <span className="metric-value font-mono text-2xl font-bold text-[var(--ui-muted)]">
                 $ {inventoryCostValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[#94a3b8] font-bold text-lg">/</span>
-              <span className="font-mono text-2xl font-bold text-[#111c2d]">
+              <span className="text-[var(--ui-subtle)] font-bold text-lg">/</span>
+              <span className="metric-value font-mono text-2xl font-bold text-[var(--ui-text)]">
                 $ {inventorySaleValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
             </div>
             <div className="flex gap-2 mt-2">
               {outOfStockCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#b91c1c] bg-[#fef2f2] px-2 py-0.5 rounded border border-[#fecaca]">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-danger-text)] bg-[var(--ui-danger-bg)] px-2 py-0.5 rounded border border-[var(--ui-danger-border)]">
                   {outOfStockCount} Agotados
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#b45309] bg-[#fffbeb] px-2 py-0.5 rounded border border-[#fde68a]">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-warning-text)] bg-[var(--ui-warning-bg)] px-2 py-0.5 rounded border border-[var(--ui-warning-border)]">
                 1 Costo incrementado
               </span>
             </div>
@@ -178,40 +227,55 @@ export const DashboardScreen: React.FC = () => {
         {/* Main Work Area: Arqueo de Caja & Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Cierre de Turno (Arqueo) - Left Column */}
-          <div className="lg:col-span-5 bg-white border border-[#cbd5e1] rounded-xl overflow-hidden shadow-xs flex flex-col">
-            <div className="bg-[#f8fafc] px-5 py-3.5 border-b border-[#cbd5e1]">
-              <h2 className="font-bold text-base md:text-lg text-[#111c2d]">
+          <div className="lg:col-span-5 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl overflow-hidden shadow-xs flex flex-col">
+            <div className="bg-[var(--ui-surface-muted)] px-5 py-3.5 border-b border-[var(--ui-border)]">
+              <h2 className="font-bold text-base md:text-lg text-[var(--ui-text)]">
                 Cierre de Turno (Arqueo)
               </h2>
             </div>
 
             <div className="p-5 flex-1 flex flex-col gap-4">
               {/* Comparative Panel */}
-              <div className="bg-[#f8fafc] p-4 rounded-xl border border-[#cbd5e1] space-y-2 text-xs md:text-sm">
-                <div className="flex justify-between items-center text-[#475569]">
-                  <span>Fondo Inicial Caja:</span>
-                  <span className="font-mono font-semibold text-[#111c2d]">
+              <div className="bg-[var(--ui-surface-muted)] p-4 rounded-xl border border-[var(--ui-border)] space-y-2.5 text-xs md:text-sm">
+                {/* Fondo Inicial Editable */}
+                <div className="flex justify-between items-center text-[var(--ui-secondary)]">
+                  <div className="flex items-center gap-2">
+                    <span>Fondo Inicial Caja:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditInitialCashValue(cashShift.initialCash.toFixed(2));
+                        setIsEditInitialCashModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-[var(--ui-brand-strong)] hover:text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 hover:bg-[var(--ui-brand)]/20 px-2 py-0.5 rounded font-bold transition-all cursor-pointer group"
+                      title="Clic para modificar el fondo inicial de apertura de caja"
+                    >
+                      <Edit2 className="w-3 h-3 text-[var(--ui-brand-strong)]" />
+                      <span>Editar</span>
+                    </button>
+                  </div>
+                  <span className="font-mono font-bold text-sm text-[var(--ui-text)]">
                     $ {cashShift.initialCash.toFixed(2)}
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center text-[#475569]">
+                <div className="flex justify-between items-center text-[var(--ui-secondary)]">
                   <span>Ventas en Efectivo (+):</span>
-                  <span className="font-mono font-bold text-[#006948]">
+                  <span className="font-mono font-bold text-[var(--ui-brand-strong)]">
                     $ {cashShift.cashSalesTotal.toFixed(2)}
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center text-[#475569]">
+                <div className="flex justify-between items-center text-[var(--ui-secondary)]">
                   <span>Retiros / Pagos (-):</span>
-                  <span className="font-mono font-bold text-[#dc2626]">
+                  <span className="font-mono font-bold text-[var(--ui-danger-text)]">
                     $ {cashShift.withdrawalsTotal.toFixed(2)}
                   </span>
                 </div>
 
-                <div className="border-t border-[#cbd5e1] pt-2.5 mt-2 flex justify-between items-center font-bold text-sm md:text-base">
-                  <span className="text-[#111c2d]">Efectivo Esperado:</span>
-                  <span className="font-mono text-base md:text-lg text-[#111c2d]">
+                <div className="border-t border-[var(--ui-border)] pt-2.5 mt-2 flex justify-between items-center font-bold text-sm md:text-base">
+                  <span className="text-[var(--ui-text)]">Efectivo Esperado:</span>
+                  <span className="font-mono text-base md:text-lg text-[var(--ui-brand-strong)] font-black">
                     $ {cashShift.expectedCash.toFixed(2)}
                   </span>
                 </div>
@@ -219,11 +283,11 @@ export const DashboardScreen: React.FC = () => {
 
               {/* Input Area: Efectivo Real Contado */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-[#111c2d]">
-                  Efectivo Real Contado
+                <label className="block text-xs font-bold text-[var(--ui-text)]">
+                  Efectivo Real Contado en Gaveta
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-base font-bold text-[#64748b]">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-base font-bold text-[var(--ui-muted)]">
                     $
                   </span>
                   <input
@@ -231,24 +295,24 @@ export const DashboardScreen: React.FC = () => {
                     step="0.01"
                     value={inputCountedCash}
                     onChange={(e) => handleCountedChange(e.target.value)}
-                    className="w-full pl-8 pr-4 py-2.5 bg-white border-2 border-[#cbd5e1] rounded-lg font-mono text-base md:text-lg font-bold text-right text-[#111c2d] focus:border-[#316bf3] outline-none transition-all"
+                    className="w-full pl-8 pr-4 py-2.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] rounded-lg font-mono text-base md:text-lg font-bold text-right text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none transition-all"
                   />
                 </div>
               </div>
 
               {/* Balance Indicator Status */}
               {isPerfectMatch ? (
-                <div className="flex items-center justify-center p-3 bg-[#ecfdf5] border border-[#a7f3d0] rounded-xl text-[#047857] font-bold text-xs md:text-sm gap-2">
+                <div className="flex items-center justify-center p-3 bg-[var(--ui-brand-soft)] border border-[var(--ui-brand-soft-border)] rounded-xl text-[var(--ui-brand-strong)] font-bold text-xs md:text-sm gap-2">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Cuadre Perfecto ($ 0.00)</span>
                 </div>
               ) : isMissing ? (
-                <div className="flex items-center justify-center p-3 bg-[#fef2f2] border border-[#fecaca] rounded-xl text-[#b91c1c] font-bold text-xs md:text-sm gap-2">
+                <div className="flex items-center justify-center p-3 bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] rounded-xl text-[var(--ui-danger-text)] font-bold text-xs md:text-sm gap-2">
                   <AlertCircle className="w-4 h-4" />
                   <span>Faltante en Caja ({difference.toFixed(2)})</span>
                 </div>
               ) : (
-                <div className="flex items-center justify-center p-3 bg-[#eff6ff] border border-[#bfdbfe] rounded-xl text-[#1e40af] font-bold text-xs md:text-sm gap-2">
+                <div className="flex items-center justify-center p-3 bg-[var(--ui-info-bg)] border border-[var(--ui-info-border)] rounded-xl text-[var(--ui-info-text)] font-bold text-xs md:text-sm gap-2">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Sobrante en Caja (+${difference.toFixed(2)})</span>
                 </div>
@@ -256,116 +320,303 @@ export const DashboardScreen: React.FC = () => {
             </div>
 
             {/* Final Action Button */}
-            <div className="p-4 bg-[#f8fafc] border-t border-[#cbd5e1] mt-auto">
+            <div className="p-4 bg-[var(--ui-surface-muted)] border-t border-[var(--ui-border)] mt-auto">
               <button
                 onClick={closeShiftAndGenerateReport}
-                className="w-full bg-[#006948] hover:bg-[#005137] text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2.5 transition-colors shadow-sm active:scale-[0.98]"
+                className="w-full bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2.5 transition-colors shadow-sm active:scale-[0.98] cursor-pointer"
               >
-                <Receipt className="w-4 h-4 text-[#85f8c4]" />
+                <Receipt className="w-4 h-4 text-[var(--ui-mint)]" />
                 <span className="text-xs md:text-sm">
-                  Cerrar Turno e Imprimir Reporte Z
+                  Cerrar Turno e Imprimir Reporte Z [F12]
                 </span>
               </button>
             </div>
           </div>
 
-          {/* Chart & Recent Activity - Right Column */}
-          <div className="lg:col-span-7 flex flex-col gap-6">
-            {/* Chart: Ventas por Hora */}
-            <div className="bg-white border border-[#cbd5e1] rounded-xl p-5 shadow-xs flex flex-col">
+          {/* Right Column: Hourly Sales Chart & Quick Stats */}
+          <div className="lg:col-span-7 space-y-6">
+            {/* Hourly Sales Visualization */}
+            <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-5 shadow-xs">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-sm md:text-base text-[#111c2d]">
-                  Ventas por Hora
-                </h3>
-                <span className="text-[11px] font-mono text-[#64748b] bg-[#f1f5f9] px-2 py-0.5 rounded">
-                  Turno Activo
-                </span>
+                <div>
+                  <h3 className="font-bold text-base text-[var(--ui-text)]">
+                    Ventas por Hora (Turno Actual)
+                  </h3>
+                  <p className="text-xs text-[var(--ui-muted)]">Comportamiento de la afluencia en caja</p>
+                </div>
+                <div className="flex items-center gap-1 text-xs font-semibold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-2.5 py-1 rounded-lg">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Pico: 14:00 - 16:00</span>
+                </div>
               </div>
 
-              {/* Chart Visual Representation */}
-              <div className="h-44 relative border-l border-b border-[#cbd5e1] ml-4 mb-2 flex items-end justify-between px-3 pt-3 gap-3">
-                {hourlyData.map((item, idx) => (
-                  <div
-                    key={item.hour}
-                    className="w-full flex flex-col items-center h-full justify-end group relative"
-                  >
-                    {/* Hover tooltip */}
-                    <div className="absolute -top-7 opacity-0 group-hover:opacity-100 transition-opacity bg-[#111c2d] text-white text-[10px] font-mono px-1.5 py-0.5 rounded shadow z-10 whitespace-nowrap pointer-events-none">
-                      ${item.amount}
+              {/* Chart Bars */}
+              <div className="h-44 flex items-end justify-between gap-3 pt-6 pb-2 px-2 border-b border-[var(--ui-border)]">
+                {hourlyData.map((d) => (
+                  <div key={d.hour} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity font-mono text-[10px] font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-1 rounded">
+                      ${d.amount}
                     </div>
-                    {/* Bar */}
                     <div
-                      style={{ height: item.height }}
-                      className={`w-full rounded-t transition-all ${
-                        idx === 3
-                          ? 'bg-[#006948] hover:bg-[#00855d]'
-                          : 'bg-[#006948]/30 hover:bg-[#006948]/50'
-                      }`}
+                      style={{ height: d.height }}
+                      className="w-full max-w-[42px] bg-[var(--ui-brand)] group-hover:bg-[var(--ui-brand)] rounded-t-lg transition-all shadow-xs"
                     />
+                    <span className="font-mono text-[11px] text-[var(--ui-muted)]">{d.hour}</span>
                   </div>
-                ))}
-              </div>
-
-              {/* X Axis Labels */}
-              <div className="flex justify-between text-xs text-[#64748b] font-mono ml-4 px-2">
-                {hourlyData.map(item => (
-                  <span key={item.hour}>{item.hour}</span>
                 ))}
               </div>
             </div>
 
-            {/* Table: Últimos Movimientos */}
-            <div className="bg-white border border-[#cbd5e1] rounded-xl p-5 shadow-xs flex-1">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="font-bold text-sm md:text-base text-[#111c2d]">
-                  Últimos Movimientos de Caja
-                </h3>
-                <button
-                  onClick={() => setIsCashMovementModalOpen(true)}
-                  className="text-xs text-[#316bf3] hover:underline font-semibold"
-                >
-                  + Agregar Retiro / Pago
-                </button>
-              </div>
+            {/* Quick Session Details & Cash Breakdown */}
+            <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-5 shadow-xs">
+              <h3 className="font-bold text-sm text-[var(--ui-text)] mb-3">
+                Desglose de Movimientos del Turno
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 bg-[var(--ui-surface-muted)] rounded-lg border border-[var(--ui-border)]">
+                  <div className="text-[var(--ui-muted)] font-medium">Apertura</div>
+                  <div className="font-mono font-bold text-sm text-[var(--ui-text)] mt-0.5">
+                    ${cashShift.initialCash.toFixed(2)}
+                  </div>
+                </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-[#f8fafc] font-mono text-[11px] uppercase text-[#64748b] border-b border-[#cbd5e1]">
-                      <th className="p-2.5">Hora</th>
-                      <th className="p-2.5">Tipo / Descripción</th>
-                      <th className="p-2.5 text-right">Monto</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-xs md:text-sm divide-y divide-[#e2e8f0]">
-                    {cashShift.movements.slice(0, 5).map((mov) => {
-                      const isNegative = mov.amount < 0 || mov.type === 'RETIRO';
+                <div className="p-3 bg-[var(--ui-brand-soft)] rounded-lg border border-[var(--ui-brand-soft-border)]">
+                  <div className="text-[var(--ui-brand-strong)] font-medium">Ventas Efectivo</div>
+                  <div className="font-mono font-bold text-sm text-[var(--ui-brand-strong)] mt-0.5">
+                    ${cashShift.cashSalesTotal.toFixed(2)}
+                  </div>
+                </div>
 
-                      return (
-                        <tr key={mov.id} className="hover:bg-[#f8fafc] transition-colors">
-                          <td className="p-2.5 font-mono text-xs text-[#64748b]">
-                            {mov.time}
-                          </td>
-                          <td className="p-2.5 font-medium text-[#111c2d]">
-                            {mov.description}
-                          </td>
-                          <td
-                            className={`p-2.5 font-mono font-bold text-right ${
-                              isNegative ? 'text-[#dc2626]' : 'text-[#006948]'
-                            }`}
-                          >
-                            {isNegative ? `-$ ${Math.abs(mov.amount).toFixed(2)}` : `+$ ${mov.amount.toFixed(2)}`}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div className="p-3 bg-[var(--ui-info-bg)] rounded-lg border border-[var(--ui-info-border)]">
+                  <div className="text-[var(--ui-info-text)] font-medium">Transferencias</div>
+                  <div className="font-mono font-bold text-sm text-[var(--ui-info-text)] mt-0.5">
+                    ${cashShift.transferSalesTotal.toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-[var(--ui-danger-bg)] rounded-lg border border-[var(--ui-danger-border)]">
+                  <div className="text-[var(--ui-danger-text)] font-medium">Retiros / Gastos</div>
+                  <div className="font-mono font-bold text-sm text-[var(--ui-danger-text)] mt-0.5">
+                    ${cashShift.withdrawalsTotal.toFixed(2)}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Sales History & Cashier in Charge Table */}
+        <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl shadow-xs overflow-hidden">
+          <div className="p-4 md:p-5 border-b border-[var(--ui-border)] flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+            <div>
+              <h3 className="font-bold text-base text-[var(--ui-text)] flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-[var(--ui-brand-strong)]" />
+                <span>Historial de Ventas y Personas a Cargo</span>
+              </h3>
+              <p className="text-xs text-[var(--ui-muted)] mt-0.5">
+                Auditoría detallada de tickets emitidos y qué trabajador estuvo atendiendo en cada venta.
+              </p>
+            </div>
+
+            {/* Search Filter */}
+            <div className="flex items-center gap-2.5">
+              <div className="relative">
+                <Search className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={salesSearchTerm}
+                  onChange={(e) => setSalesSearchTerm(e.target.value)}
+                  placeholder="Buscar por ticket o trabajador..."
+                  className="pl-9 pr-3 py-1.5 text-xs bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)] w-56 md:w-64"
+                />
+              </div>
+              <span className="px-2.5 py-1 bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] border border-[var(--ui-border)] rounded-lg font-mono text-xs font-bold shrink-0">
+                {filteredSales.length} ventas
+              </span>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs md:text-sm">
+              <thead>
+                <tr className="bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] font-mono text-[11px] font-bold text-[var(--ui-muted)] uppercase tracking-wider">
+                  <th className="px-4 py-3"># Ticket</th>
+                  <th className="px-4 py-3">Fecha & Hora</th>
+                  <th className="px-4 py-3">Persona a Cargo</th>
+                  <th className="px-4 py-3">Artículos / Cantidad</th>
+                  <th className="px-4 py-3">Método de Pago</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3 text-center">Comprobante</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--ui-border)]">
+                {filteredSales.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-[var(--ui-subtle)]">
+                      <ShoppingBag className="w-10 h-10 mx-auto mb-2 text-[var(--ui-subtle)]" />
+                      <p className="font-semibold text-sm text-[var(--ui-muted)]">No hay ventas registradas</p>
+                      <p className="text-xs text-[var(--ui-subtle)] mt-0.5">
+                        Las ventas realizadas desde el Punto de Venta aparecerán aquí detallando quién estuvo a cargo.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSales.map((sale) => (
+                    <tr key={sale.id} className="hover:bg-[var(--ui-surface-muted)] transition-colors">
+                      {/* Ticket Number */}
+                      <td className="px-4 py-3 font-mono font-bold text-xs text-[var(--ui-brand-strong)]">
+                        {sale.ticketNumber}
+                      </td>
+
+                      {/* Date & Time */}
+                      <td className="px-4 py-3 font-mono text-xs text-[var(--ui-muted)] whitespace-nowrap">
+                        {sale.date} <span className="text-[var(--ui-subtle)]">{sale.time}</span>
+                      </td>
+
+                      {/* Person in Charge */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-[var(--ui-brand)]/15 text-[var(--ui-brand-strong)] font-bold text-xs flex items-center justify-center ring-1 ring-[var(--ui-brand)]/30 shrink-0">
+                            {(sale.cashierName || 'W').charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-bold text-xs text-[var(--ui-text)]">
+                            {sale.cashierName || 'Wismar (Administrador)'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Items */}
+                      <td className="px-4 py-3 text-xs text-[var(--ui-secondary)]">
+                        <span>{sale.totalArticles || sale.items.length} productos</span>
+                        <span className="text-[10px] text-[var(--ui-muted)] block">
+                          ({sale.totalUnits} unidades)
+                        </span>
+                      </td>
+
+                      {/* Payment Method */}
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase ${
+                          sale.paymentMethod === 'cash'
+                            ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]'
+                            : 'bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)]'
+                        }`}>
+                          {sale.paymentMethod === 'cash' ? 'Efectivo' : 'Transferencia'}
+                        </span>
+                      </td>
+
+                      {/* Total */}
+                      <td className="px-4 py-3 text-right font-mono font-bold text-sm text-[var(--ui-text)]">
+                        ${sale.subtotal.toFixed(2)}
+                      </td>
+
+                      {/* Action */}
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLastCompletedSale(sale);
+                            setIsReceiptModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] rounded-lg border border-[var(--ui-border)] transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                          title="Ver y reimprimir comprobante"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                          <span>Ver</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {/* Modal: Modificar Fondo Inicial de Caja */}
+      {isEditInitialCashModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-sm w-full p-5 space-y-4">
+            <div className="flex justify-between items-center border-b border-[var(--ui-border)] pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] flex items-center justify-center font-bold">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-sm text-[var(--ui-text)]">
+                  Editar Fondo Inicial de Caja
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsEditInitialCashModalOpen(false)}
+                className="text-[var(--ui-muted)] hover:text-[var(--ui-text)] p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[var(--ui-muted)]">
+              Modifica el monto de dinero con el que abrió la caja hoy. El <strong>efectivo esperado</strong> y el balance del arqueo se recalcularán automáticamente.
+            </p>
+
+            <form onSubmit={handleSaveInitialCash} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-[var(--ui-text)] mb-1">
+                  Nuevo Fondo Inicial ($)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-base font-bold text-[var(--ui-muted)]">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={editInitialCashValue}
+                    onChange={(e) => setEditInitialCashValue(e.target.value)}
+                    className="w-full pl-8 pr-4 py-2 bg-[var(--ui-surface-muted)] border-2 border-[var(--ui-brand)] rounded-xl font-mono text-lg font-black text-[var(--ui-brand-strong)] outline-none focus:ring-2 focus:ring-[var(--ui-brand)]/20"
+                    placeholder="25.00"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex items-center gap-1.5 pt-1">
+                <span className="text-[10px] font-semibold text-[var(--ui-muted)]">Montos rápidos:</span>
+                {[10, 20, 25, 50, 100].map(amt => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setEditInitialCashValue(amt.toFixed(2))}
+                    className="px-2 py-1 bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] font-mono text-xs font-bold text-[var(--ui-secondary)] rounded-md transition-colors cursor-pointer"
+                  >
+                    ${amt}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--ui-border)]">
+                <button
+                  type="button"
+                  onClick={() => setIsEditInitialCashModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-hover)] rounded-lg border border-[var(--ui-border)] cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Guardar Fondo</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

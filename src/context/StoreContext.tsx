@@ -1,81 +1,136 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import {
   Product,
   CartItem,
+  PaymentMethod,
   Sale,
   KardexMovement,
   CashShift,
   CashMovement,
   ScreenType,
-  PaymentMethod,
   ReceptionInvoice,
-  ReceptionDraftItem
+  ReceptionDraftItem,
+  PurchaseOrder,
+  PurchaseOrderItem,
+  OrderStatus,
+  Worker,
+  AuthUser
 } from '../types';
-import {
-  INITIAL_PRODUCTS,
-  INITIAL_KARDEX,
-  INITIAL_SALES,
-  INITIAL_SHIFT
-} from '../data/initialData';
+import { INITIAL_PRODUCTS, INITIAL_KARDEX, INITIAL_SHIFT, INITIAL_SALES } from '../data/initialData';
 import { sounds } from '../utils/audio';
+import {
+  api,
+  ApiError,
+  BackendProduct,
+  BackendSale,
+  BackendKardexMovement,
+  BackendCashSession,
+  BackendPedido,
+  getStoredAuthUser,
+  setAuthSession,
+  clearAuthSession,
+  setOnUnauthorized
+} from '../services/api';
 
-interface StoreContextType {
+export interface StoreContextType {
   // Navigation
   activeScreen: ScreenType;
   setActiveScreen: (screen: ScreenType) => void;
 
+  // Auth / Session
+  currentUser: AuthUser | null;
+  loginUser: (username: string, password: string) => Promise<AuthUser>;
+  logoutUser: () => void;
+  changeMyPassword: (currentPassword: string, newPassword: string) => Promise<void>;
+
+  // Workers / Personal de Tienda
+  workers: Worker[];
+  activeWorkerName: string;
+  refreshWorkers: () => Promise<void>;
+  createWorker: (name: string, role?: string, username?: string, password?: string) => Promise<void>;
+  assignWorkerPassword: (id: number, password: string) => Promise<void>;
+  deleteWorker: (id: number) => Promise<void>;
+  setActiveWorker: (name: string) => void;
+
   // Products & Inventory
   products: Product[];
-  addProduct: (product: Omit<Product, 'id'>) => Product;
-  updateProduct: (id: string, updates: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  adjustStock: (productId: string, delta: number, type: 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DAÑO', reason?: string) => void;
+  addProduct: (prod: Omit<Product, 'id'>) => Promise<Product>;
+  updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
+  adjustStock: (productId: string, delta: number, type: 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DAÑO', reason?: string) => Promise<void>;
+  refreshProducts: () => Promise<void>;
 
   // POS Cart
   cart: CartItem[];
-  addToCartByBarcodeOrCode: (code: string) => { success: boolean; code?: string };
+  addToCartByBarcodeOrCode: (code: string) => Promise<{ success: boolean; code?: string }>;
   addProductToCart: (product: Product, quantity?: number) => void;
-  updateCartQuantity: (productId: string, quantity: number) => void;
-  removeFromCart: (productId: string) => void;
+  updateCartQuantity: (index: number, quantity: number) => void;
+  removeFromCart: (index: number) => void;
   clearCart: () => void;
   selectedCartIndex: number;
-  setSelectedCartIndex: (idx: number) => void;
+  setSelectedCartIndex: (index: number) => void;
 
   // POS Payment
   paymentMethod: PaymentMethod;
   setPaymentMethod: (method: PaymentMethod) => void;
   cashReceived: string;
   setCashReceived: (val: string) => void;
-  confirmCheckout: () => Sale | null;
+  confirmCheckout: () => Promise<Sale | null>;
+  isCheckingOut: boolean;
 
   // Kardex
   kardexMovements: KardexMovement[];
   selectedKardexProductId: string | null;
   setSelectedKardexProductId: (id: string | null) => void;
   getProductKardex: (productId: string) => KardexMovement[];
+  refreshKardex: () => Promise<void>;
+  deleteKardexMovement: (movementId: string, revertStock?: boolean) => Promise<void>;
+  returnProduct: (productId: string, quantity: number, reason: string, refundAmount?: number, affectsCash?: boolean) => Promise<void>;
 
   // Cash Register / Shift
   cashShift: CashShift;
   setCashierName: (name: string) => void;
   setCountedCash: (amount: number) => void;
-  addCashMovement: (type: 'RETIRO' | 'INGRESO', description: string, amount: number) => void;
+  updateInitialCash: (amount: number) => Promise<void>;
+  addCashMovement: (type: 'RETIRO' | 'INGRESO', description: string, amount: number) => Promise<void>;
   closeShiftAndGenerateReport: () => void;
-  openShift: (initialCash: number, cashierName: string) => void;
+  closeShift: (countedCash: number, observations?: string) => Promise<void>;
+  openShift: (initialCash: number, cashierName: string) => Promise<void>;
+  refreshCashShift: () => Promise<void>;
 
   // Reception / Compras
-  receivePurchases: (invoice: Omit<ReceptionInvoice, 'id'>) => void;
+  receivePurchases: (invoice: Omit<ReceptionInvoice, 'id'>) => Promise<void>;
+
+  // Purchase Orders / Agenda de Pedidos
+  purchaseOrders: PurchaseOrder[];
+  selectedOrderForReception: PurchaseOrder | null;
+  setSelectedOrderForReception: (order: PurchaseOrder | null) => void;
+  refreshPurchaseOrders: () => Promise<void>;
+  createPurchaseOrder: (order: {
+    providerId?: number;
+    providerName: string;
+    expectedDeliveryDate?: string;
+    items: Array<{ productId: string; code: string; name: string; quantityOrdered: number; estimatedCost: number; category?: string; barcode?: string }>;
+    notes?: string;
+  }) => Promise<PurchaseOrder>;
+  updatePurchaseOrder: (id: string, updates: Partial<PurchaseOrder>) => Promise<void>;
+  deletePurchaseOrder: (id: string) => Promise<void>;
+  receiveOrderInStock: (orderId: string, invoiceNumber: string, receivedItems: ReceptionDraftItem[], providerName: string, providerId: number) => Promise<void>;
 
   // Sales History
   sales: Sale[];
   lastCompletedSale: Sale | null;
   setLastCompletedSale: (sale: Sale | null) => void;
+  refreshSales: () => Promise<void>;
 
   // Modals & UI Controls
+  isOpenShiftModalOpen: boolean;
+  setIsOpenShiftModalOpen: (open: boolean) => void;
   isAltaAlVueloOpen: boolean;
   setIsAltaAlVueloOpen: (open: boolean) => void;
   unknownBarcode: string;
   setUnknownBarcode: (code: string) => void;
-  handleSaveAltaAlVuelo: (data: { name: string; category: any; costPrice: number; salePrice: number; initialStock?: number }) => void;
+  handleSaveAltaAlVuelo: (data: { name: string; category: any; costPrice: number; salePrice: number; initialStock?: number }) => Promise<void>;
 
   isNewProductModalOpen: boolean;
   setIsNewProductModalOpen: (open: boolean) => void;
@@ -92,6 +147,11 @@ interface StoreContextType {
   isGlobalSearchOpen: boolean;
   setIsGlobalSearchOpen: (open: boolean) => void;
 
+  // Theme / Dark Mode
+  darkMode: boolean;
+  setDarkMode: (val: boolean) => void;
+  toggleDarkMode: () => void;
+
   // Quick action toast
   toastMessage: string | null;
   showToast: (msg: string) => void;
@@ -99,73 +159,165 @@ interface StoreContextType {
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY_PREFIX = 'mi_tienda_familiar_v1_';
+function mapBackendProduct(bp: BackendProduct): Product {
+  return {
+    id: String(bp.id_producto),
+    code: bp.codigo_interno,
+    barcode: bp.codigos_barras && bp.codigos_barras.length > 0 ? bp.codigos_barras[0] : '',
+    name: bp.nombre,
+    category: (bp.categoria_nombre as any) || 'Abarrotes',
+    distributor: bp.proveedor_nombre,
+    providerId: bp.id_proveedor,
+    costPrice: bp.precio_compra_actual,
+    salePrice: bp.precio_venta_actual,
+    stock: bp.stock_actual,
+    minStock: bp.stock_minimo,
+    unit: bp.unidad_medida,
+    lastUpdated: bp.fecha_modificacion
+  };
+}
 
-export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+function mapBackendKardex(bk: BackendKardexMovement): KardexMovement {
+  return {
+    id: String(bk.id_movimiento),
+    productId: String(bk.id_producto),
+    date: bk.fecha_hora ? bk.fecha_hora.split(' ')[0] : new Date().toISOString().split('T')[0],
+    time: bk.fecha_hora ? bk.fecha_hora.split(' ')[1] || '00:00' : '00:00',
+    type: bk.tipo_movimiento === 'ENTRADA_COMPRA' ? 'COMPRA' : bk.tipo_movimiento === 'SALIDA_VENTA' ? 'VENTA' : (bk.tipo_movimiento as any),
+    docNumber: bk.referencia_id || '-',
+    responsible: bk.usuario_nombre || 'Admin',
+    quantityChange: bk.cantidad,
+    balance: bk.stock_posterior,
+    notes: bk.observacion || undefined
+  };
+}
+
+function mapBackendSale(bs: BackendSale): Sale {
+  return {
+    id: String(bs.id_venta),
+    ticketNumber: bs.numero_venta,
+    date: bs.fecha_hora ? bs.fecha_hora.split(' ')[0] : new Date().toISOString().split('T')[0],
+    time: bs.fecha_hora ? bs.fecha_hora.split(' ')[1] || '00:00' : '00:00',
+    subtotal: bs.total,
+    totalArticles: bs.items ? bs.items.length : 0,
+    totalUnits: bs.items ? bs.items.reduce((acc, it) => acc + it.cantidad, 0) : 0,
+    paymentMethod: bs.metodo_pago === 'TRANSFERENCIA' ? 'transfer' : 'cash',
+    cashReceived: bs.monto_recibido,
+    change: bs.cambio,
+    cashierName: bs.cajero_nombre || 'Admin',
+    items: bs.items ? bs.items.map(it => ({
+      productId: String(it.id_producto),
+      code: it.producto_codigo,
+      name: it.producto_nombre,
+      quantity: it.cantidad,
+      unitPrice: it.precio_unitario,
+      costPrice: it.costo_unitario,
+      subtotal: it.subtotal
+    })) : []
+  };
+}
+
+function mapBackendCashSession(bs: BackendCashSession): CashShift {
+  return {
+    sessionId: bs.id_sesion_caja,
+    isOpen: bs.estado === 'ABIERTA',
+    openedAt: bs.fecha_apertura,
+    cashierName: bs.cajero_nombre,
+    initialCash: bs.monto_inicial,
+    cashSalesTotal: bs.total_ventas_efectivo,
+    transferSalesTotal: bs.total_ventas_transferencia,
+    withdrawalsTotal: bs.total_retiros,
+    depositsTotal: bs.movimientos.filter(m => m.tipo === 'INGRESO').reduce((total, m) => total + m.monto, 0),
+    expectedCash: bs.total_esperado,
+    countedCash: bs.total_real_entregado || 0,
+    movements: bs.movimientos.map(m => ({
+      id: m.id,
+      time: m.hora,
+      date: m.fecha,
+      type: m.tipo as any,
+      description: m.descripcion,
+      amount: m.monto,
+      ticketRef: m.ticket_ref || undefined
+    }))
+  };
+}
+
+function mapBackendPedido(bp: BackendPedido): PurchaseOrder {
+  return {
+    id: String(bp.id_pedido),
+    orderNumber: bp.numero_pedido,
+    providerId: bp.id_proveedor || undefined,
+    providerName: bp.proveedor_nombre,
+    date: bp.fecha_pedido,
+    expectedDeliveryDate: bp.fecha_estimada_entrega || undefined,
+    status: bp.estado,
+    totalUnits: bp.total_unidades,
+    totalAmount: bp.total_estimado,
+    notes: bp.notas || undefined,
+    receivedInvoiceNumber: bp.factura_recepcion || undefined,
+    receivedDate: bp.fecha_recepcion || undefined,
+    items: bp.items.map(it => ({
+      id: String(it.id_detalle_pedido),
+      productId: String(it.id_producto),
+      code: it.producto_codigo,
+      name: it.producto_nombre,
+      quantityOrdered: it.cantidad_pedida,
+      estimatedCost: it.costo_estimado,
+      subtotal: it.subtotal_estimado,
+      category: it.categoria,
+      barcode: it.codigo_barras
+    }))
+  };
+}
+
+export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Navigation
   const [activeScreen, setActiveScreen] = useState<ScreenType>('pos');
 
   // Products
   const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}products`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return INITIAL_PRODUCTS;
+    const local = localStorage.getItem('tienda_products');
+    return local ? JSON.parse(local) : INITIAL_PRODUCTS;
   });
-
-  // Initial cart with items matching the mockup (Row 1: Pan Bimbo 1x $2.50, Row 2: Leche Vita 2x $0.95, Row 3: Pan de Agua 3x $0.15)
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    const p1 = INITIAL_PRODUCTS.find(p => p.code === '78610001') || INITIAL_PRODUCTS[0];
-    const p2 = INITIAL_PRODUCTS.find(p => p.code === '78610223') || INITIAL_PRODUCTS[1];
-    const p3 = INITIAL_PRODUCTS.find(p => p.code === '00000004') || INITIAL_PRODUCTS[2];
-    return [
-      { product: p1, quantity: 1, unitPrice: p1.salePrice, subtotal: p1.salePrice * 1 },
-      { product: p2, quantity: 2, unitPrice: p2.salePrice, subtotal: p2.salePrice * 2 },
-      { product: p3, quantity: 3, unitPrice: p3.salePrice, subtotal: p3.salePrice * 3 }
-    ];
-  });
-
-  const [selectedCartIndex, setSelectedCartIndex] = useState<number>(1); // Row 2 selected as in Image 1
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
-  const [cashReceived, setCashReceived] = useState<string>('5.00');
 
   // Kardex
   const [kardexMovements, setKardexMovements] = useState<KardexMovement[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}kardex`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return INITIAL_KARDEX;
+    const local = localStorage.getItem('tienda_kardex');
+    return local ? JSON.parse(local) : INITIAL_KARDEX;
   });
-  const [selectedKardexProductId, setSelectedKardexProductId] = useState<string | null>('prod-8');
+  const [selectedKardexProductId, setSelectedKardexProductId] = useState<string | null>(null);
 
   // Sales
   const [sales, setSales] = useState<Sale[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}sales`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return INITIAL_SALES;
+    const local = localStorage.getItem('tienda_sales');
+    return local ? JSON.parse(local) : INITIAL_SALES;
   });
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
 
-  // Shift & Cash Box
+  // Cash Shift
   const [cashShift, setCashShift] = useState<CashShift>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}shift`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.cashierName === 'Carlos M.' || parsed.cashierName === 'Carlos') {
-          parsed.cashierName = 'Wismar';
-        }
-        return parsed;
-      } catch (e) { console.error(e); }
-    }
-    return INITIAL_SHIFT;
+    const local = localStorage.getItem('tienda_shift');
+    return local ? JSON.parse(local) : INITIAL_SHIFT;
   });
 
+  // Purchase Orders (Agenda de Pedidos)
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => {
+    const local = localStorage.getItem('tienda_purchase_orders');
+    return local ? JSON.parse(local) : [];
+  });
+  const [selectedOrderForReception, setSelectedOrderForReception] = useState<PurchaseOrder | null>(null);
+
+  // POS Cart
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [selectedCartIndex, setSelectedCartIndex] = useState<number>(0);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [cashReceived, setCashReceived] = useState<string>('0.00');
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const checkoutInFlight = useRef(false);
+  const checkoutAttempt = useRef<{ signature: string; key: string } | null>(null);
+
   // Modals
+  const [isOpenShiftModalOpen, setIsOpenShiftModalOpen] = useState(false);
   const [isAltaAlVueloOpen, setIsAltaAlVueloOpen] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState('');
   const [isNewProductModalOpen, setIsNewProductModalOpen] = useState(false);
@@ -175,44 +327,313 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Persist key state
+  // Theme State
+  const [darkMode, setDarkModeState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('tienda_theme') === 'dark';
+    } catch {
+      return false;
+    }
+  });
+
+  const setDarkMode = useCallback((val: boolean) => {
+    setDarkModeState(val);
+    try {
+      localStorage.setItem('tienda_theme', val ? 'dark' : 'light');
+    } catch { /* noop */ }
+    document.documentElement.classList.toggle('dark', val);
+  }, []);
+
+  const toggleDarkMode = useCallback(() => {
+    setDarkMode(!darkMode);
+  }, [darkMode, setDarkMode]);
+
   useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}products`, JSON.stringify(products));
+    document.documentElement.classList.toggle('dark', darkMode);
+  }, [darkMode]);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  }, []);
+
+  // Auth user state
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredAuthUser());
+
+  // Workers / Personal de Tienda
+  const [workers, setWorkers] = useState<Worker[]>(() => {
+    const local = localStorage.getItem('tienda_workers');
+    return local ? JSON.parse(local) : [
+      { id: 1, name: 'Wismar (Administrador)', username: 'admin', role: 'ADMINISTRADOR', active: true, canLogin: true },
+      { id: 2, name: 'Cajero Principal', username: 'cajero', role: 'CAJERO', active: true, canLogin: false }
+    ];
+  });
+
+  const [activeWorkerName, setActiveWorkerNameState] = useState<string>(() => {
+    const storedUser = getStoredAuthUser();
+    return localStorage.getItem('tienda_active_worker') || storedUser?.nombre_completo || 'Wismar (Administrador)';
+  });
+
+  const setActiveWorker = useCallback((name: string) => {
+    setActiveWorkerNameState(name);
+    try {
+      localStorage.setItem('tienda_active_worker', name);
+    } catch { /* noop */ }
+    setCashShift(prev => ({ ...prev, cashierName: name }));
+    showToast(`👤 Turno activo: ${name} ahora a cargo`);
+  }, [showToast]);
+
+  const refreshWorkers = useCallback(async () => {
+    try {
+      const backendWorkers = await api.getTrabajadores();
+      if (backendWorkers && backendWorkers.length > 0) {
+        const mapped: Worker[] = backendWorkers.map(w => ({
+          id: w.id_usuario,
+          name: w.nombre_completo,
+          username: w.username,
+          role: w.role_name,
+          active: w.activo,
+          createdAt: w.fecha_creacion,
+          canLogin: Boolean(w.puede_iniciar_sesion)
+        }));
+        setWorkers(mapped);
+        try {
+          localStorage.setItem('tienda_workers', JSON.stringify(mapped));
+        } catch { /* noop */ }
+      }
+    } catch (e) {
+      console.warn('Usando trabajadores locales');
+    }
+  }, []);
+
+  const createWorker = useCallback(async (name: string, role: string = 'CAJERO', username?: string, password?: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    try {
+      const payload: { nombre_completo: string; rol: string; username?: string; password?: string } = {
+        nombre_completo: cleanName,
+        rol: role
+      };
+      if (username && username.trim()) payload.username = username.trim();
+      if (password && password.trim()) payload.password = password;
+
+      const created = await api.crearTrabajador(payload);
+      const newW: Worker = {
+        id: created.id_usuario,
+        name: created.nombre_completo,
+        username: created.username,
+        role: created.role_name,
+        active: created.activo,
+        createdAt: created.fecha_creacion,
+        canLogin: Boolean(created.puede_iniciar_sesion)
+      };
+      setWorkers(prev => [...prev, newW]);
+      showToast(newW.canLogin ? `Usuario "${newW.username}" creado con acceso al sistema` : `Trabajador "${newW.name}" registrado`);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        showToast(`⚠️ ${err.message}`);
+        throw err;
+      }
+      const newW: Worker = {
+        id: Date.now(),
+        name: cleanName,
+        username: (username && username.trim()) || cleanName.toLowerCase().replace(/\s+/g, '_'),
+        role,
+        active: true,
+        canLogin: Boolean(password && password.trim())
+      };
+      setWorkers(prev => [...prev, newW]);
+      showToast(`Trabajador "${newW.name}" registrado`);
+    }
+  }, [showToast]);
+
+  const assignWorkerPassword = useCallback(async (id: number, password: string) => {
+    await api.asignarClaveTrabajador(id, password);
+    setWorkers(prev => prev.map(w => w.id === id ? { ...w, canLogin: true } : w));
+    showToast('🔑 Contraseña asignada correctamente');
+  }, [showToast]);
+
+  const deleteWorker = useCallback(async (id: number) => {
+    try {
+      await api.eliminarTrabajador(id);
+    } catch (e) {
+      // Local fallback
+    }
+    const removed = workers.find(w => w.id === id);
+    setWorkers(prev => prev.filter(w => w.id !== id));
+    if (removed && removed.name.trim().toLowerCase() === activeWorkerName.trim().toLowerCase()) {
+      const admin = workers.find(w => w.id === 1);
+      setActiveWorker(admin ? admin.name : 'Wismar (Administrador)');
+    }
+    showToast('Trabajador eliminado');
+  }, [showToast, workers, activeWorkerName, setActiveWorker]);
+
+  // Sync with Backend
+  const refreshProducts = useCallback(async () => {
+    try {
+      const backendProds = await api.getProductos();
+      if (backendProds && backendProds.length > 0) {
+        setProducts(backendProds.map(mapBackendProduct));
+      }
+    } catch (e) {
+      console.warn('Usando productos locales');
+    }
+  }, []);
+
+  const refreshKardex = useCallback(async () => {
+    try {
+      const backendKardex = await api.getKardexGeneral();
+      if (backendKardex) {
+        setKardexMovements(backendKardex.map(mapBackendKardex));
+      }
+    } catch (e) {
+      console.warn('Usando kardex local');
+    }
+  }, []);
+
+  const refreshCashShift = useCallback(async () => {
+    try {
+      const backendShift = await api.getCajaActiva();
+      if (backendShift) {
+        const mapped = mapBackendCashSession(backendShift);
+        setCashShift(mapped);
+        if (!mapped.isOpen) {
+          setIsOpenShiftModalOpen(true);
+        }
+      } else {
+        setCashShift(prev => ({ ...prev, isOpen: false }));
+        setIsOpenShiftModalOpen(true);
+      }
+    } catch (e) {
+      console.warn('Usando caja local');
+    }
+  }, []);
+
+  const refreshPurchaseOrders = useCallback(async () => {
+    try {
+      const backendOrders = await api.getPedidos();
+      if (backendOrders) {
+        setPurchaseOrders(backendOrders.map(mapBackendPedido));
+      }
+    } catch (e) {
+      console.warn('Usando pedidos locales');
+    }
+  }, []);
+
+  const refreshSales = useCallback(async () => {
+    try {
+      const backendSales = await api.getVentas();
+      if (backendSales) {
+        setSales(backendSales.map(mapBackendSale));
+      }
+    } catch (e) {
+      console.warn('Usando ventas locales');
+    }
+  }, []);
+
+  // Init fetch
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      setCurrentUser(null);
+    });
+    return () => setOnUnauthorized(null);
+  }, []);
+
+  useEffect(() => {
+    refreshProducts();
+    refreshKardex();
+    refreshCashShift();
+    refreshPurchaseOrders();
+    refreshWorkers();
+    refreshSales();
+  }, [refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales]);
+
+  const loginUser = useCallback(async (username: string, password: string): Promise<AuthUser> => {
+    const res = await api.login(username.trim(), password);
+    setAuthSession(res.token, res.usuario);
+    setCurrentUser(res.usuario);
+    if (res.usuario?.nombre_completo) {
+      setActiveWorkerNameState(res.usuario.nombre_completo);
+      try {
+        localStorage.setItem('tienda_active_worker', res.usuario.nombre_completo);
+      } catch { /* noop */ }
+    }
+    await Promise.all([
+      refreshProducts(),
+      refreshKardex(),
+      refreshCashShift(),
+      refreshPurchaseOrders(),
+      refreshWorkers(),
+      refreshSales()
+    ]);
+    return res.usuario;
+  }, [refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales]);
+
+  const logoutUser = useCallback(() => {
+    clearAuthSession();
+    setCurrentUser(null);
+    showToast('🔒 Sesión cerrada');
+  }, [showToast]);
+
+  const changeMyPassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    const res = await api.cambiarClave(currentPassword, newPassword);
+    setAuthSession(res.token, res.usuario);
+    setCurrentUser(res.usuario);
+    showToast('✅ Contraseña actualizada correctamente');
+  }, [showToast]);
+
+  // LocalStorage backups
+  useEffect(() => {
+    localStorage.setItem('tienda_products', JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}kardex`, JSON.stringify(kardexMovements));
+    localStorage.setItem('tienda_kardex', JSON.stringify(kardexMovements));
   }, [kardexMovements]);
 
   useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}sales`, JSON.stringify(sales));
+    localStorage.setItem('tienda_sales', JSON.stringify(sales));
   }, [sales]);
 
   useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}shift`, JSON.stringify(cashShift));
+    localStorage.setItem('tienda_shift', JSON.stringify(cashShift));
   }, [cashShift]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
+  useEffect(() => {
+    localStorage.setItem('tienda_purchase_orders', JSON.stringify(purchaseOrders));
+  }, [purchaseOrders]);
 
   // Cart operations
-  const addProductToCart = (product: Product, quantity = 1) => {
-    sounds.playScanBeep();
-    setCart(prev => {
-      const existingIdx = prev.findIndex(item => item.product.id === product.id);
-      if (existingIdx >= 0) {
-        const updated = [...prev];
-        const newQty = updated[existingIdx].quantity + quantity;
-        updated[existingIdx] = {
-          ...updated[existingIdx],
-          quantity: newQty,
-          subtotal: Number((newQty * updated[existingIdx].unitPrice).toFixed(2))
-        };
-        setSelectedCartIndex(existingIdx);
-        return updated;
-      } else {
+  const addProductToCart = useCallback(
+    (product: Product, quantity = 1) => {
+      if (product.stock <= 0) {
+        sounds.playErrorBeep();
+        showToast(`❌ "${product.name}" tiene Stock 0. Realiza un ajuste o recepción de compra.`);
+        return;
+      }
+
+      setCart(prev => {
+        const existingIdx = prev.findIndex(item => item.product.id === product.id);
+        if (existingIdx >= 0) {
+          const currentQty = prev[existingIdx].quantity;
+          const newQty = currentQty + quantity;
+          if (newQty > product.stock) {
+            sounds.playErrorBeep();
+            showToast(`⚠️ Solo hay ${product.stock} unidades en stock.`);
+            return prev;
+          }
+          const updated = [...prev];
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            quantity: newQty,
+            subtotal: Number((newQty * updated[existingIdx].unitPrice).toFixed(2))
+          };
+          sounds.playScannerBeep();
+          setSelectedCartIndex(existingIdx);
+          return updated;
+        }
+
+        sounds.playScannerBeep();
         const newItem: CartItem = {
           product,
           quantity,
@@ -222,55 +643,128 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const nextCart = [...prev, newItem];
         setSelectedCartIndex(nextCart.length - 1);
         return nextCart;
+      });
+    },
+    [showToast]
+  );
+
+  const addToCartByBarcodeOrCode = useCallback(
+    async (query: string): Promise<{ success: boolean; code?: string }> => {
+      const raw = query.trim();
+      if (!raw) return { success: false };
+
+      let quantity = 1;
+      let targetCode = raw.toUpperCase();
+
+      // Multiplier syntax: e.g. "5*786100123", "5X786100123", "12*BEB-COC-3000"
+      const multiplierMatch = raw.match(/^(\d+(?:\.\d+)?)\s*[\*xX]\s*(.+)$/);
+      if (multiplierMatch) {
+        quantity = Math.max(1, parseFloat(multiplierMatch[1]) || 1);
+        targetCode = multiplierMatch[2].trim().toUpperCase();
       }
-    });
-  };
 
-  const addToCartByBarcodeOrCode = (code: string): { success: boolean; code?: string } => {
-    const trimmed = code.trim();
-    if (!trimmed) return { success: false };
+      // 1. Try local memory
+      let matched = products.find(
+        p => (p.barcode && p.barcode.toUpperCase() === targetCode) || p.code.toUpperCase() === targetCode
+      );
 
-    const product = products.find(p => p.code === trimmed || p.barcode === trimmed);
-    if (product) {
-      addProductToCart(product, 1);
-      return { success: true };
-    } else {
-      sounds.playWarning();
-      setUnknownBarcode(trimmed);
+      // 2. Try Backend if not found locally
+      if (!matched) {
+        try {
+          const res = await api.buscarProducto(targetCode);
+          if (res && res.producto) {
+            matched = mapBackendProduct(res.producto);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (matched) {
+        addProductToCart(matched, quantity);
+        return { success: true };
+      }
+
+      // Not found -> trigger Alta al Vuelo
+      sounds.playErrorBeep();
+      setUnknownBarcode(targetCode);
       setIsAltaAlVueloOpen(true);
-      return { success: false, code: trimmed };
-    }
-  };
+      return { success: false, code: targetCode };
+    },
+    [products, addProductToCart]
+  );
 
-  const updateCartQuantity = (productId: string, quantity: number) => {
-    sounds.playClick();
+  // Global Keybindings & USB Barcode Scanner support
+  useEffect(() => {
+    let scannerBuffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      // F-Keys
+      if (e.key === 'F12') {
+        e.preventDefault();
+        closeShiftAndGenerateReport();
+        return;
+      }
+
+      if (isInput) return;
+
+      // Barcode hardware scanner input
+      const currentTime = Date.now();
+      const isFast = currentTime - lastKeyTime < 50;
+      lastKeyTime = currentTime;
+
+      if (e.key === 'Enter') {
+        if (scannerBuffer.length >= 3) {
+          addToCartByBarcodeOrCode(scannerBuffer);
+          scannerBuffer = '';
+        }
+        return;
+      }
+
+      if (e.key.length === 1) {
+        if (isFast || scannerBuffer.length > 0) {
+          scannerBuffer += e.key;
+        } else {
+          scannerBuffer = e.key;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [addToCartByBarcodeOrCode]);
+
+  const updateCartQuantity = useCallback((index: number, quantity: number) => {
     if (quantity <= 0) {
-      removeFromCart(productId);
+      removeFromCart(index);
       return;
     }
-    setCart(prev =>
-      prev.map(item => {
-        if (item.product.id === productId) {
-          return {
-            ...item,
-            quantity,
-            subtotal: Number((quantity * item.unitPrice).toFixed(2))
-          };
-        }
-        return item;
-      })
-    );
-  };
 
-  const removeFromCart = (productId: string) => {
-    sounds.playClick();
     setCart(prev => {
-      const next = prev.filter(item => item.product.id !== productId);
-      if (selectedCartIndex >= next.length) {
-        setSelectedCartIndex(Math.max(0, next.length - 1));
+      if (index < 0 || index >= prev.length) return prev;
+      const target = prev[index];
+      if (quantity > target.product.stock) {
+        sounds.playErrorBeep();
+        showToast(`⚠️ Solo hay ${target.product.stock} unidades disponibles de "${target.product.name}".`);
+        return prev;
       }
-      return next;
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        quantity,
+        subtotal: Number((quantity * updated[index].unitPrice).toFixed(2))
+      };
+      return updated;
     });
+  }, [showToast]);
+
+  const removeFromCart = (index: number) => {
+    setCart(prev => prev.filter((_, i) => i !== index));
+    setSelectedCartIndex(prev => Math.max(0, prev - 1));
   };
 
   const clearCart = () => {
@@ -279,355 +773,518 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCashReceived('0.00');
   };
 
-  // Alta al Vuelo (Quick Registration on unknown scan)
-  const handleSaveAltaAlVuelo = (data: {
+  // Alta al Vuelo
+  const handleSaveAltaAlVuelo = async (data: {
     name: string;
     category: any;
     costPrice: number;
     salePrice: number;
     initialStock?: number;
   }) => {
-    const newProduct: Product = {
-      id: `prod-${Date.now()}`,
-      code: unknownBarcode || `AUT-${Math.floor(100000 + Math.random() * 900000)}`,
-      barcode: unknownBarcode || undefined,
+    const code = unknownBarcode || `AUT-${Date.now()}`;
+    const newProd = await addProduct({
+      code,
+      barcode: unknownBarcode,
       name: data.name,
-      category: data.category || 'Abarrotes',
-      costPrice: Number(data.costPrice) || 0,
-      salePrice: Number(data.salePrice) || 0,
-      stock: Number(data.initialStock) || 10,
-      minStock: 5,
-      lastUpdated: new Date().toISOString()
-    };
+      category: data.category,
+      costPrice: data.costPrice,
+      salePrice: data.salePrice,
+      stock: data.initialStock || 0,
+      minStock: 5
+    });
 
-    setProducts(prev => [newProduct, ...prev]);
-
-    // Record in Kardex
-    const now = new Date();
-    const newKardex: KardexMovement = {
-      id: `k-${Date.now()}`,
-      productId: newProduct.id,
-      date: 'Hoy',
-      time: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      type: 'INICIAL',
-      docNumber: 'ALTA-VUELO',
-      responsible: cashShift.cashierName,
-      quantityChange: newProduct.stock,
-      balance: newProduct.stock,
-      costUnit: newProduct.costPrice,
-      notes: 'Alta al vuelo desde caja'
-    };
-    setKardexMovements(prev => [newKardex, ...prev]);
-
-    // Automatically add to cart!
-    addProductToCart(newProduct, 1);
     setIsAltaAlVueloOpen(false);
     setUnknownBarcode('');
-    showToast(`Producto "${newProduct.name}" registrado y añadido al carrito`);
+    addProductToCart(newProd, 1);
+    showToast(`Producto "${newProd.name}" registrado`);
   };
 
-  // Add Product (General)
-  const addProduct = (prodData: Omit<Product, 'id'>): Product => {
-    const newProduct: Product = {
-      ...prodData,
-      id: `prod-${Date.now()}`
-    };
-    setProducts(prev => [newProduct, ...prev]);
-
-    // Initial kardex entry
-    if (newProduct.stock > 0) {
-      const now = new Date();
-      const kMov: KardexMovement = {
-        id: `k-${Date.now()}`,
-        productId: newProduct.id,
-        date: 'Hoy',
-        time: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        type: 'INICIAL',
-        docNumber: 'INV-NEW',
-        responsible: cashShift.cashierName,
-        quantityChange: newProduct.stock,
-        balance: newProduct.stock,
-        costUnit: newProduct.costPrice,
-        notes: 'Registro inicial de producto'
-      };
-      setKardexMovements(prev => [kMov, ...prev]);
+  // Checkout / Venta
+  const confirmCheckout = async (): Promise<Sale | null> => {
+    if (checkoutInFlight.current || cart.length === 0) return null;
+    if (!cashShift.isOpen) {
+      showToast('Abre la caja antes de cobrar.');
+      setIsOpenShiftModalOpen(true);
+      return null;
     }
 
-    showToast(`Producto "${newProduct.name}" creado`);
-    return newProduct;
+    const subtotal = cart.reduce((acc, item) => acc + item.subtotal, 0);
+    const totalUnits = cart.reduce((acc, item) => acc + item.quantity, 0);
+    const cashNum = paymentMethod === 'cash' ? Number(cashReceived) : subtotal;
+    if (!Number.isFinite(cashNum) || cashNum < 0 || (paymentMethod === 'cash' && Math.round(cashNum * 100) < Math.round(subtotal * 100))) {
+      showToast('El efectivo recibido es insuficiente para cubrir el total.');
+      return null;
+    }
+    const saleItems = cart.map(it => ({
+      productId: it.product.id,
+      code: it.product.code,
+      name: it.product.name,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      costPrice: it.product.costPrice,
+      subtotal: it.subtotal
+    }));
+
+    const currentCashier = activeWorkerName || cashShift.cashierName || 'Wismar (Administrador)';
+    const payload = {
+        id_sesion_caja: cashShift.sessionId,
+        items: cart.map(it => ({
+          id_producto: parseInt(it.product.id),
+          cantidad: it.quantity,
+          precio_unitario: it.unitPrice
+        })),
+        metodo_pago: paymentMethod === 'cash' ? 'EFECTIVO' as const : 'TRANSFERENCIA' as const,
+        monto_recibido: cashNum,
+        cajero_nombre: currentCashier
+    };
+    const signature = JSON.stringify(payload);
+    if (checkoutAttempt.current && checkoutAttempt.current.signature !== signature) {
+      showToast('El cobro anterior está pendiente de confirmar. Reintenta con el mismo carrito, pago y cajero.');
+      return null;
+    }
+    checkoutAttempt.current ??= {
+      signature,
+      key: crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('')
+    };
+    checkoutInFlight.current = true;
+    setIsCheckingOut(true);
+    try {
+      const res = await api.cobrarVenta({ ...payload, clave_idempotencia: checkoutAttempt.current.key });
+
+      const completedSale: Sale = {
+        id: String(res.id_venta),
+        ticketNumber: res.numero_venta,
+        date: res.fecha_hora.split(' ')[0],
+        time: res.fecha_hora.split(' ')[1] || '00:00',
+        items: saleItems,
+        subtotal: res.subtotal,
+        totalArticles: cart.length,
+        totalUnits,
+        paymentMethod,
+        cashReceived: res.monto_recibido,
+        change: res.cambio,
+        cashierName: res.cajero_nombre || currentCashier
+      };
+
+      setSales(prev => [completedSale, ...prev.filter(sale => sale.id !== completedSale.id)]);
+      setLastCompletedSale(completedSale);
+      checkoutAttempt.current = null;
+      clearCart();
+      sounds.playPaymentSuccess();
+      refreshProducts();
+      refreshKardex();
+      refreshCashShift();
+      setIsReceiptModalOpen(true);
+      return completedSale;
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        checkoutAttempt.current = null;
+        showToast(`No se completó el cobro: ${error.message}`);
+      } else {
+        showToast('No se pudo confirmar el cobro. Conservamos el carrito; reintenta para recuperar el mismo ticket.');
+      }
+      return null;
+    } finally {
+      checkoutInFlight.current = false;
+      setIsCheckingOut(false);
+    }
   };
 
-  const updateProduct = (id: string, updates: Partial<Product>) => {
+  // Product CRUD
+  const addProduct = async (prodData: Omit<Product, 'id'>): Promise<Product> => {
+    try {
+      const categories = await api.getCategorias();
+      const selectedCategory = categories.find(category =>
+        category.nombre.trim().toLocaleLowerCase('es') === prodData.category.trim().toLocaleLowerCase('es')
+      );
+      if (!selectedCategory) {
+        throw new Error(`La categoría "${prodData.category}" no está disponible. Actualiza la tienda y vuelve a intentar.`);
+      }
+      const created = await api.crearProducto({
+        id_categoria: selectedCategory.id_categoria,
+        codigo_interno: prodData.code,
+        nombre: prodData.name,
+        precio_compra_actual: prodData.costPrice,
+        precio_venta_actual: prodData.salePrice,
+        stock_minimo: prodData.minStock || 5,
+        stock_inicial: prodData.stock || 0,
+        codigos_barras: prodData.barcode ? [prodData.barcode] : []
+      });
+      const mapped = mapBackendProduct(created);
+      setProducts(prev => [mapped, ...prev]);
+      refreshKardex();
+      showToast(`Producto "${mapped.name}" creado`);
+      return mapped;
+    } catch (error) {
+      showToast(`No se creó el producto: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
+
+  const updateProduct = async (id: string, updates: Partial<Product>) => {
+    try {
+      const numId = parseInt(id);
+      if (!isNaN(numId)) {
+        await api.actualizarProducto(numId, {
+          nombre: updates.name,
+          codigo_interno: updates.code,
+          precio_compra_actual: updates.costPrice,
+          precio_venta_actual: updates.salePrice,
+          stock_minimo: updates.minStock,
+          codigos_barras: updates.barcode !== undefined ? (updates.barcode ? [updates.barcode] : []) : undefined
+        });
+      }
+    } catch (e) {
+      console.warn('Actualización local:', e);
+    }
     setProducts(prev =>
-      prev.map(p => {
-        if (p.id === id) {
-          return { ...p, ...updates, lastUpdated: new Date().toISOString() };
-        }
-        return p;
-      })
+      prev.map(p => (p.id === id ? { ...p, ...updates, lastUpdated: new Date().toISOString() } : p))
     );
     showToast('Producto actualizado');
   };
 
-  const deleteProduct = (id: string) => {
+  const deleteProduct = async (id: string) => {
+    try {
+      const numId = parseInt(id);
+      if (!isNaN(numId)) {
+        await api.eliminarProducto(numId);
+      }
+    } catch (e) {
+      console.warn('Eliminación local:', e);
+    }
     setProducts(prev => prev.filter(p => p.id !== id));
     showToast('Producto eliminado');
   };
 
-  // Manual stock adjustment with Kardex recording
-  const adjustStock = (
+  const adjustStock = async (
     productId: string,
     delta: number,
     type: 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DAÑO',
     reason?: string
   ) => {
-    const target = products.find(p => p.id === productId);
-    if (!target) return;
-
-    const newStock = Math.max(0, target.stock + delta);
-    setProducts(prev =>
-      prev.map(p => (p.id === productId ? { ...p, stock: newStock } : p))
-    );
-
-    const now = new Date();
-    const movement: KardexMovement = {
-      id: `k-${Date.now()}`,
-      productId,
-      date: 'Hoy',
-      time: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      type,
-      docNumber: type === 'DAÑO' ? `MER-${Math.floor(100 + Math.random() * 900)}` : `AJ-${Math.floor(100 + Math.random() * 900)}`,
-      responsible: cashShift.cashierName,
-      quantityChange: delta,
-      balance: newStock,
-      costUnit: target.costPrice,
-      notes: reason || (type === 'DAÑO' ? 'Merma / daño en bodega' : 'Ajuste manual de inventario')
-    };
-
-    setKardexMovements(prev => [movement, ...prev]);
-    showToast(`Stock ajustado: ${delta > 0 ? '+' : ''}${delta} (${newStock} un)`);
-  };
-
-  // Confirm POS Sale
-  const confirmCheckout = (): Sale | null => {
-    if (cart.length === 0) return null;
-
-    const totalArticles = cart.length;
-    const totalUnits = cart.reduce((sum, item) => sum + item.quantity, 0);
-    const subtotal = Number(cart.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2));
-    const receivedNum = Number(cashReceived) || subtotal;
-    const change = paymentMethod === 'cash' ? Math.max(0, Number((receivedNum - subtotal).toFixed(2))) : 0;
-
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
-    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const ticketNumber = `TK-${4093 + sales.length}`;
-
-    const saleItems = cart.map(item => ({
-      productId: item.product.id,
-      code: item.product.code,
-      name: item.product.name,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      costPrice: item.product.costPrice,
-      subtotal: item.subtotal
-    }));
-
-    const newSale: Sale = {
-      id: `sale-${Date.now()}`,
-      ticketNumber,
-      date: dateStr,
-      time: timeStr,
-      items: saleItems,
-      subtotal,
-      totalArticles,
-      totalUnits,
-      paymentMethod,
-      cashReceived: paymentMethod === 'cash' ? receivedNum : undefined,
-      change: paymentMethod === 'cash' ? change : undefined,
-      cashierName: cashShift.cashierName
-    };
-
-    // 1. Deduct Stock & Record Kardex for each item
-    const kardexAdditions: KardexMovement[] = [];
-    const updatedProducts = products.map(prod => {
-      const cartMatch = cart.find(c => c.product.id === prod.id);
-      if (cartMatch) {
-        const newStock = Math.max(0, prod.stock - cartMatch.quantity);
-        kardexAdditions.push({
-          id: `k-${Date.now()}-${prod.id}`,
-          productId: prod.id,
-          date: 'Hoy',
-          time: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-          type: 'VENTA',
-          docNumber: ticketNumber,
-          responsible: cashShift.cashierName,
-          quantityChange: -cartMatch.quantity,
-          balance: newStock,
-          costUnit: prod.costPrice
+    try {
+      const numId = parseInt(productId);
+      if (!isNaN(numId)) {
+        await api.ajustarInventario({
+          id_producto: numId,
+          tipo_ajuste: type,
+          cantidad: Math.abs(delta),
+          motivo: reason
         });
-        return { ...prod, stock: newStock };
+        refreshProducts();
+        refreshKardex();
+        showToast('Ajuste de inventario aplicado');
+        return;
       }
-      return prod;
-    });
+    } catch (e) {
+      // Local fallback
+    }
 
-    setProducts(updatedProducts);
-    setKardexMovements(prev => [...kardexAdditions, ...prev]);
-
-    // 2. Add to sales history
-    setSales(prev => [newSale, ...prev]);
-    setLastCompletedSale(newSale);
-
-    // 3. Update Cash Register Shift
-    setCashShift(prev => {
-      const isCash = paymentMethod === 'cash';
-      const newCashSales = isCash ? prev.cashSalesTotal + subtotal : prev.cashSalesTotal;
-      const newTransferSales = !isCash ? prev.transferSalesTotal + subtotal : prev.transferSalesTotal;
-      const newExpected = prev.initialCash + newCashSales - prev.withdrawalsTotal + prev.depositsTotal;
-      const newMovement: CashMovement = {
-        id: `mov-${Date.now()}`,
-        time: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        date: 'Hoy',
-        type: 'VENTA',
-        description: `Venta - Ticket #${ticketNumber}`,
-        amount: subtotal,
-        ticketRef: ticketNumber
-      };
-
-      return {
-        ...prev,
-        cashSalesTotal: Number(newCashSales.toFixed(2)),
-        transferSalesTotal: Number(newTransferSales.toFixed(2)),
-        expectedCash: Number(newExpected.toFixed(2)),
-        countedCash: Number(newExpected.toFixed(2)),
-        movements: [newMovement, ...prev.movements]
-      };
-    });
-
-    // Play sound and open receipt
-    sounds.playCashRegister();
-    setIsReceiptModalOpen(true);
-    clearCart();
-
-    return newSale;
+    const now = new Date();
+    setProducts(prev =>
+      prev.map(p => {
+        if (p.id !== productId) return p;
+        const newStock = Math.max(0, p.stock + delta);
+        const mov: KardexMovement = {
+          id: `mov-${Date.now()}`,
+          productId: p.id,
+          date: now.toISOString().split('T')[0],
+          time: now.toTimeString().split(' ')[0],
+          type,
+          docNumber: `AJU-${Date.now()}`,
+          responsible: cashShift.cashierName,
+          quantityChange: delta,
+          balance: newStock,
+          notes: reason
+        };
+        setKardexMovements(kprev => [mov, ...kprev]);
+        return { ...p, stock: newStock };
+      })
+    );
+    showToast('Ajuste de inventario aplicado');
   };
 
-  // Kardex query helper
+  const deleteKardexMovement = async (movementId: string, revertStock: boolean = true) => {
+    try {
+      const numId = parseInt(movementId);
+      if (!isNaN(numId)) {
+        const res = await api.eliminarMovimientoKardex(numId, revertStock);
+        refreshProducts();
+        refreshKardex();
+        showToast(res.mensaje || 'Movimiento eliminado del Kardex');
+        return;
+      }
+    } catch (e) {
+      console.warn('Eliminación local de movimiento:', e);
+    }
+
+    // Local fallback
+    const target = kardexMovements.find(m => m.id === movementId);
+    if (target && revertStock) {
+      const revDelta = -target.quantityChange;
+      setProducts(prev =>
+        prev.map(p =>
+          p.id === target.productId ? { ...p, stock: Math.max(0, p.stock + revDelta) } : p
+        )
+      );
+    }
+    setKardexMovements(prev => prev.filter(m => m.id !== movementId));
+    showToast('Movimiento eliminado del Kardex');
+  };
+
+  const returnProduct = async (
+    productId: string,
+    quantity: number,
+    reason: string,
+    refundAmount: number = 0,
+    affectsCash: boolean = false
+  ) => {
+    try {
+      const res = await api.registrarDevolucion({
+        id_producto: Number(productId), cantidad: quantity, motivo: reason,
+        afecta_caja: affectsCash, monto_devolucion: refundAmount
+      });
+      await Promise.all([refreshProducts(), refreshKardex(), ...(affectsCash ? [refreshCashShift()] : [])]);
+      showToast(res.mensaje || 'Devolución de producto registrada');
+    } catch (error) {
+      showToast(`No se registró la devolución: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
+
   const getProductKardex = (productId: string) => {
     return kardexMovements.filter(m => m.productId === productId);
   };
 
-  // Cash shift updates
+  // Shift operations
   const setCashierName = (name: string) => {
-    setCashShift(prev => ({
-      ...prev,
-      cashierName: name
-    }));
+    setCashShift(prev => ({ ...prev, cashierName: name }));
   };
 
   const setCountedCash = (amount: number) => {
-    setCashShift(prev => ({
-      ...prev,
-      countedCash: amount
-    }));
+    setCashShift(prev => ({ ...prev, countedCash: amount }));
   };
 
-  const addCashMovement = (type: 'RETIRO' | 'INGRESO', description: string, amount: number) => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-    const signedAmount = type === 'RETIRO' ? -Math.abs(amount) : Math.abs(amount);
+  const updateInitialCash = async (newInitialCash: number) => {
+    try {
+      const backendShift = await api.actualizarFondoInicial(newInitialCash);
+      setCashShift(mapBackendCashSession(backendShift));
+      showToast(`Fondo inicial actualizado a $${newInitialCash.toFixed(2)}`);
+    } catch (error) {
+      showToast(`No se actualizó el fondo: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
 
-    setCashShift(prev => {
-      const newWithdrawals = type === 'RETIRO' ? prev.withdrawalsTotal + Math.abs(amount) : prev.withdrawalsTotal;
-      const newDeposits = type === 'INGRESO' ? prev.depositsTotal + Math.abs(amount) : prev.depositsTotal;
-      const newExpected = prev.initialCash + prev.cashSalesTotal - newWithdrawals + newDeposits;
-
-      const newMov: CashMovement = {
-        id: `mov-${Date.now()}`,
-        time: timeStr,
-        date: 'Hoy',
-        type,
-        description,
-        amount: signedAmount
-      };
-
-      return {
-        ...prev,
-        withdrawalsTotal: Number(newWithdrawals.toFixed(2)),
-        depositsTotal: Number(newDeposits.toFixed(2)),
-        expectedCash: Number(newExpected.toFixed(2)),
-        movements: [newMov, ...prev.movements]
-      };
-    });
-
-    showToast(`${type === 'RETIRO' ? 'Retiro' : 'Ingreso'} registrado: $${amount.toFixed(2)}`);
+  const addCashMovement = async (type: 'RETIRO' | 'INGRESO', description: string, amount: number) => {
+    try {
+      const backendShift = await api.registrarMovimientoCaja(type, amount, description);
+      setCashShift(mapBackendCashSession(backendShift));
+      showToast(`Movimiento de caja (${type}) registrado`);
+    } catch (error) {
+      showToast(`No se registró el movimiento de caja: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
   };
 
   const closeShiftAndGenerateReport = () => {
-    sounds.playCashRegister();
     setIsReportZModalOpen(true);
   };
 
-  const openShift = (initialCash: number, cashierName: string) => {
-    const now = new Date();
-    setCashShift({
-      isOpen: true,
-      openedAt: now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      cashierName: cashierName || 'Wismar',
-      initialCash,
-      cashSalesTotal: 0,
-      transferSalesTotal: 0,
-      withdrawalsTotal: 0,
-      depositsTotal: 0,
-      expectedCash: initialCash,
-      countedCash: initialCash,
-      movements: []
-    });
-    showToast('Caja abierta exitosamente');
+  const closeShift = async (countedCash: number, observations?: string) => {
+    try {
+      const closedShift = await api.cerrarCaja(countedCash, observations);
+      setCashShift(mapBackendCashSession(closedShift));
+      showToast('Caja cerrada con éxito');
+    } catch (error) {
+      showToast(`No se cerró la caja: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
   };
 
-  // Reception of merchandise (Recepcion de compras)
-  const receivePurchases = (invoiceData: Omit<ReceptionInvoice, 'id'>) => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const openShift = async (initialCash: number, cashierName: string) => {
+    try {
+      const openedShift = await api.abrirCaja(initialCash, `Apertura por ${cashierName}`);
+      setCashShift(mapBackendCashSession(openedShift));
+      setIsOpenShiftModalOpen(false);
+      showToast(`Caja abierta con $${initialCash.toFixed(2)} por ${cashierName}`);
+    } catch (error) {
+      showToast(`No se abrió la caja: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
 
-    // Update products cost, price & stock
-    const kardexEntries: KardexMovement[] = [];
-    
-    setProducts(prevProducts => {
-      return prevProducts.map(prod => {
-        const itemDraft = invoiceData.items.find(it => it.code === prod.code);
-        if (itemDraft) {
-          const updatedStock = prod.stock + itemDraft.quantityReceived;
-          kardexEntries.push({
-            id: `k-${Date.now()}-${prod.id}`,
-            productId: prod.id,
-            date: 'Hoy',
-            time: timeStr,
-            type: 'COMPRA',
-            docNumber: invoiceData.invoiceNumber || `FAC-${Math.floor(1000 + Math.random() * 9000)}`,
-            responsible: cashShift.cashierName,
-            quantityChange: itemDraft.quantityReceived,
-            balance: updatedStock,
-            costUnit: itemDraft.unitCost,
-            notes: `Proveedor: ${invoiceData.provider}`
-          });
-
-          return {
-            ...prod,
-            costPrice: itemDraft.unitCost,
-            salePrice: itemDraft.suggestedSalePrice || itemDraft.salePrice,
-            stock: updatedStock,
-            lastUpdated: now.toISOString()
-          };
-        }
-        return prod;
+  // Reception / Compras
+  const receivePurchases = async (invoice: Omit<ReceptionInvoice, 'id'>) => {
+    try {
+      if (!Number.isInteger(invoice.providerId) || invoice.providerId <= 0) {
+        throw new Error('Selecciona un proveedor registrado.');
+      }
+      await api.registrarCompra({
+        id_proveedor: invoice.providerId,
+        numero_documento: invoice.invoiceNumber,
+        items: invoice.items.map(it => ({
+          codigo: it.code, nombre: it.name, cantidad: it.quantityReceived,
+          costo_unitario: it.unitCost, precio_venta_sugerido: it.suggestedSalePrice || it.salePrice
+        })),
+        observaciones: `Recepción de mercadería ${invoice.provider}`
       });
+      await Promise.all([refreshProducts(), refreshKardex()]);
+      showToast(`Factura ${invoice.invoiceNumber} registrada exitosamente (+${invoice.totalUnits} un)`);
+    } catch (error) {
+      showToast(`No se registró la compra: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
+
+  // Purchase Orders / Agenda de Pedidos
+  const createPurchaseOrder = async (orderData: {
+    providerId?: number;
+    providerName: string;
+    expectedDeliveryDate?: string;
+    items: Array<{ productId: string; code: string; name: string; quantityOrdered: number; estimatedCost: number; category?: string; barcode?: string }>;
+    notes?: string;
+  }): Promise<PurchaseOrder> => {
+    try {
+      const created = await api.crearPedido({
+        id_proveedor: orderData.providerId,
+        proveedor_nombre: orderData.providerName,
+        fecha_estimada_entrega: orderData.expectedDeliveryDate,
+        notas: orderData.notes,
+        items: orderData.items.map(it => ({
+          id_producto: parseInt(it.productId) || 1,
+          cantidad_pedida: it.quantityOrdered,
+          costo_estimado: it.estimatedCost
+        }))
+      });
+      const mapped = mapBackendPedido(created);
+      setPurchaseOrders(prev => [mapped, ...prev]);
+      showToast(`Pedido #${mapped.orderNumber} creado exitosamente`);
+      return mapped;
+    } catch (e) {
+      // Local fallback
+      const totalUnits = orderData.items.reduce((acc, it) => acc + it.quantityOrdered, 0);
+      const totalAmount = orderData.items.reduce((acc, it) => acc + it.quantityOrdered * it.estimatedCost, 0);
+      const todayStr = new Date().toISOString().split('T')[0];
+      const orderNum = `PED-${Date.now().toString().slice(-6)}`;
+
+      const newOrder: PurchaseOrder = {
+        id: `ped-${Date.now()}`,
+        orderNumber: orderNum,
+        providerId: orderData.providerId,
+        providerName: orderData.providerName,
+        date: todayStr,
+        expectedDeliveryDate: orderData.expectedDeliveryDate,
+        status: 'PENDIENTE',
+        totalUnits,
+        totalAmount,
+        notes: orderData.notes,
+        items: orderData.items.map((it, idx) => ({
+          id: `det-${Date.now()}-${idx}`,
+          productId: it.productId,
+          code: it.code,
+          name: it.name,
+          quantityOrdered: it.quantityOrdered,
+          estimatedCost: it.estimatedCost,
+          subtotal: it.quantityOrdered * it.estimatedCost,
+          category: it.category,
+          barcode: it.barcode
+        }))
+      };
+
+      setPurchaseOrders(prev => [newOrder, ...prev]);
+      showToast(`Pedido #${orderNum} creado exitosamente (Modo Local)`);
+      return newOrder;
+    }
+  };
+
+  const updatePurchaseOrder = async (id: string, updates: Partial<PurchaseOrder>) => {
+    try {
+      const numId = parseInt(id);
+      if (!isNaN(numId)) {
+        await api.actualizarPedido(numId, {
+          estado: updates.status,
+          fecha_estimada_entrega: updates.expectedDeliveryDate,
+          notas: updates.notes,
+          items: updates.items ? updates.items.map(it => ({
+            id_producto: parseInt(it.productId) || 1,
+            cantidad_pedida: it.quantityOrdered,
+            costo_estimado: it.estimatedCost
+          })) : undefined
+        });
+        refreshPurchaseOrders();
+        showToast('Pedido actualizado');
+        return;
+      }
+    } catch (e) {
+      console.warn('Actualización local de pedido:', e);
+    }
+
+    setPurchaseOrders(prev =>
+      prev.map(p => (p.id === id ? { ...p, ...updates } : p))
+    );
+    showToast('Pedido actualizado');
+  };
+
+  const deletePurchaseOrder = async (id: string) => {
+    try {
+      const numId = parseInt(id);
+      if (!isNaN(numId)) {
+        await api.eliminarPedido(numId);
+      }
+    } catch (e) {
+      console.warn('Eliminación local de pedido:', e);
+    }
+    setPurchaseOrders(prev => prev.filter(p => p.id !== id));
+    showToast('Pedido eliminado');
+  };
+
+  const receiveOrderInStock = async (
+    orderId: string,
+    invoiceNumber: string,
+    receivedItems: ReceptionDraftItem[],
+    providerName: string,
+    providerId: number
+  ) => {
+    // 1. Process purchase reception (which updates stock and Kardex)
+    const totalUnits = receivedItems.reduce((acc, it) => acc + it.quantityReceived, 0);
+    const totalAmount = receivedItems.reduce((acc, it) => acc + it.quantityReceived * it.unitCost, 0);
+
+    await receivePurchases({
+      provider: providerName,
+      providerId,
+      invoiceNumber,
+      date: new Date().toISOString().split('T')[0],
+      items: receivedItems,
+      totalUnits,
+      totalAmount
     });
 
-    setKardexMovements(prev => [...kardexEntries, ...prev]);
-    sounds.playCashRegister();
-    showToast(`Compra procesada: ${invoiceData.totalUnits} unidades ingresadas`);
+    // 2. Mark order as RECIBIDO
+    try {
+      const numId = parseInt(orderId);
+      if (!isNaN(numId)) {
+        await api.marcarPedidoRecibido(numId, invoiceNumber);
+        refreshPurchaseOrders();
+      }
+    } catch (e) {
+      // Local fallback
+      setPurchaseOrders(prev =>
+        prev.map(o =>
+          o.id === orderId
+            ? {
+                ...o,
+                status: 'RECIBIDO',
+                receivedInvoiceNumber: invoiceNumber,
+                receivedDate: new Date().toISOString()
+              }
+            : o
+        )
+      );
+    }
+
+    setSelectedOrderForReception(null);
+    showToast(`✅ Pedido recibido y cargado al stock con factura ${invoiceNumber}`);
   };
 
   return (
@@ -640,6 +1297,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateProduct,
         deleteProduct,
         adjustStock,
+        refreshProducts,
         cart,
         addToCartByBarcodeOrCode,
         addProductToCart,
@@ -653,20 +1311,37 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cashReceived,
         setCashReceived,
         confirmCheckout,
+        isCheckingOut,
         kardexMovements,
         selectedKardexProductId,
         setSelectedKardexProductId,
         getProductKardex,
+        refreshKardex,
+        deleteKardexMovement,
+        returnProduct,
         cashShift,
         setCashierName,
         setCountedCash,
+        updateInitialCash,
         addCashMovement,
         closeShiftAndGenerateReport,
+        closeShift,
         openShift,
+        refreshCashShift,
         receivePurchases,
+        purchaseOrders,
+        selectedOrderForReception,
+        setSelectedOrderForReception,
+        refreshPurchaseOrders,
+        createPurchaseOrder,
+        updatePurchaseOrder,
+        deletePurchaseOrder,
+        receiveOrderInStock,
         sales,
         lastCompletedSale,
         setLastCompletedSale,
+        isOpenShiftModalOpen,
+        setIsOpenShiftModalOpen,
         isAltaAlVueloOpen,
         setIsAltaAlVueloOpen,
         unknownBarcode,
@@ -682,6 +1357,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setIsCashMovementModalOpen,
         isGlobalSearchOpen,
         setIsGlobalSearchOpen,
+        darkMode,
+        setDarkMode,
+        toggleDarkMode,
+        currentUser,
+        loginUser,
+        logoutUser,
+        changeMyPassword,
+        workers,
+        activeWorkerName,
+        refreshWorkers,
+        createWorker,
+        assignWorkerPassword,
+        deleteWorker,
+        setActiveWorker,
+        refreshSales,
         toastMessage,
         showToast
       }}
