@@ -7,7 +7,7 @@ import {
   X
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { Category } from '../../types';
+import { Category, STORE_CATEGORIES } from '../../types';
 
 export const AltaAlVueloModal: React.FC = () => {
   const {
@@ -83,17 +83,7 @@ export const AltaAlVueloModal: React.FC = () => {
     }
   };
 
-  const categories: Category[] = [
-    'Abarrotes',
-    'Lácteos',
-    'Bebidas',
-    'Snacks',
-    'Limpieza',
-    'Panadería',
-    'Embutidos',
-    'Condimentos',
-    'Hogar'
-  ];
+  const categories = STORE_CATEGORIES;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">

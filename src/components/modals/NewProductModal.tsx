@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Plus, X, Package, CheckCircle2 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { Category } from '../../types';
+import { Category, STORE_CATEGORIES } from '../../types';
 
 export const NewProductModal: React.FC = () => {
   const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct } = useStore();
@@ -10,6 +10,9 @@ export const NewProductModal: React.FC = () => {
   const [code, setCode] = useState('');
   const [barcode, setBarcode] = useState('');
   const [category, setCategory] = useState<Category>('Abarrotes');
+  const [unit, setUnit] = useState('UNIDAD');
+  const [allowFraction, setAllowFraction] = useState(false);
+  const [description, setDescription] = useState('');
   const [costPrice, setCostPrice] = useState('1.00');
   const [salePrice, setSalePrice] = useState('1.50');
   const [stock, setStock] = useState('20');
@@ -33,10 +36,13 @@ export const NewProductModal: React.FC = () => {
         barcode: barcode.trim() || undefined,
         name: name.trim(),
         category,
+        unit,
+        allowFraction,
+        description: description.trim() || undefined,
         costPrice: parseFloat(costPrice) || 0,
         salePrice: parseFloat(salePrice) || 0,
-        stock: parseInt(stock) || 0,
-        minStock: parseInt(minStock) || 5,
+        stock: parseFloat(stock) || 0,
+        minStock: parseFloat(minStock) || 5,
         lastUpdated: new Date().toISOString()
       });
       setIsNewProductModalOpen(false);
@@ -48,17 +54,7 @@ export const NewProductModal: React.FC = () => {
     }
   };
 
-  const categories: Category[] = [
-    'Abarrotes',
-    'Lácteos',
-    'Bebidas',
-    'Snacks',
-    'Limpieza',
-    'Panadería',
-    'Embutidos',
-    'Condimentos',
-    'Hogar'
-  ];
+  const categories = STORE_CATEGORIES;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -173,6 +169,7 @@ export const NewProductModal: React.FC = () => {
               </label>
               <input
                 type="number"
+                step="0.01"
                 min="0"
                 value={stock}
                 onChange={(e) => setStock(e.target.value)}
@@ -185,12 +182,64 @@ export const NewProductModal: React.FC = () => {
               </label>
               <input
                 type="number"
-                min="1"
+                step="0.01"
+                min="0"
                 value={minStock}
                 onChange={(e) => setMinStock(e.target.value)}
                 className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono"
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+                Unidad de Medida
+              </label>
+              <div className="grid grid-cols-4 gap-1">
+                {(['UNIDAD', 'LIBRA', 'KG', 'GALON'] as const).map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => {
+                      setUnit(u);
+                      setAllowFraction(u === 'LIBRA' || u === 'KG' || u === 'GALON');
+                    }}
+                    className={`py-2 px-1 rounded-lg border text-[11px] font-bold transition-colors ${
+                      unit === u
+                        ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)]'
+                        : 'bg-[var(--ui-surface-muted)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:text-[var(--ui-text)]'
+                    }`}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col justify-end pb-1">
+              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-semibold text-[var(--ui-text)]">
+                <input
+                  type="checkbox"
+                  checked={allowFraction}
+                  onChange={(e) => setAllowFraction(e.target.checked)}
+                  className="rounded border-[var(--ui-border)] accent-[var(--ui-brand)] w-4 h-4"
+                />
+                <span>Permite decimales (peso/granel)</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+              Descripción / Promo Combo (Opcional)
+            </label>
+            <input
+              type="text"
+              placeholder="Ej: Promo: 6 x $1.00"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none text-xs"
+            />
           </div>
 
           <div className="flex justify-end gap-2.5 pt-4 border-t border-[var(--ui-border)] mt-4">

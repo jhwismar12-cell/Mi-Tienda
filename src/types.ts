@@ -1,6 +1,19 @@
 export type ScreenType = 'pos' | 'inventory' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
 
-export type Category = 'Abarrotes' | 'Lácteos' | 'Bebidas' | 'Limpieza' | 'Snacks' | 'Panadería' | 'Embutidos' | 'Condimentos' | 'Hogar';
+export const STORE_CATEGORIES = [
+  'Abarrotes',
+  'Lácteos',
+  'Bebidas',
+  'Limpieza',
+  'Snacks',
+  'Panadería',
+  'Embutidos',
+  'Condimentos',
+  'Hogar',
+  'Frutas y Verduras',
+] as const;
+
+export type Category = (typeof STORE_CATEGORIES)[number];
 
 export type OrderStatus = 'PENDIENTE' | 'RECIBIDO' | 'CANCELADO';
 
@@ -45,6 +58,8 @@ export interface Product {
   distributor?: string;
   providerId?: number;
   unit?: string;
+  description?: string;
+  allowFraction?: boolean;
   lastUpdated?: string;
 }
 
@@ -53,6 +68,7 @@ export interface CartItem {
   quantity: number;
   unitPrice: number;
   subtotal: number;
+  promoLabel?: string;
 }
 
 export type PaymentMethod = 'cash' | 'transfer';

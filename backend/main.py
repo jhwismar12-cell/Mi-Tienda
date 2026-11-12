@@ -271,6 +271,18 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
         if data.id_categoria is not None:
             updates.append("IDCategoria = ?")
             params.append(data.id_categoria)
+        if data.id_proveedor is not None:
+            updates.append("IDProveedor = ?")
+            params.append(data.id_proveedor)
+        if data.descripcion is not None:
+            updates.append("Descripcion = ?")
+            params.append(data.descripcion)
+        if data.unidad_medida is not None:
+            updates.append("UnidadMedida = ?")
+            params.append(data.unidad_medida)
+        if data.permite_fraccion is not None:
+            updates.append("PermiteFraccion = ?")
+            params.append(int(data.permite_fraccion))
         if data.precio_compra_actual is not None:
             updates.append("PrecioCompraActual = ?")
             params.append(data.precio_compra_actual)
@@ -299,11 +311,10 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
                         (id_producto, bc.strip(), 1 if idx == 0 else 0)
                     )
 
-    prods = services.buscar_productos(str(id_producto))
-    for p in prods:
+    for p in services.get_all_products():
         if p.id_producto == id_producto:
             return p
-    return services.get_all_products()[0]
+    raise HTTPException(status_code=404, detail="Producto no encontrado tras actualizar.")
 
 @app.delete("/api/productos/{id_producto}", tags=["Productos"])
 def eliminar_producto(id_producto: int):

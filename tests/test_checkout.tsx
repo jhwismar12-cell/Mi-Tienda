@@ -8,6 +8,7 @@ import { Product, ReceptionInvoice } from '../src/types';
 import { ReceptionScreen } from '../src/components/inventory/ReceptionScreen';
 import { NewProductModal } from '../src/components/modals/NewProductModal';
 import { AltaAlVueloModal } from '../src/components/modals/AltaAlVueloModal';
+import { BulkSaleModal } from '../src/components/pos/BulkSaleModal';
 
 const product: Product = { id: '1', code: 'INTERNAL', barcode: 'BARCODE', name: 'Producto', category: 'Bebidas', costPrice: 2, salePrice: 3, stock: 10, minStock: 1 };
 const shift: BackendCashSession = {
@@ -288,4 +289,82 @@ test('failed quick product creation preserves the form and barcode without addin
   assert.equal(store.products.length, 1);
   assert.equal(store.cart.length, 1);
   assert.equal(renderer.root.findAllByType('button').find(n => n.props.type === 'submit')!.props.disabled, false);
+});
+
+test('fractional barcode multiplier and split combo lines enforce total stock limit', async () => {
+  const arroz: Product = {
+    id: '20', code: 'GRN-ARR-MAR', name: 'Arroz Maraqueño', category: 'Abarrotes',
+    costPrice: 0.35, salePrice: 0.50, stock: 5, minStock: 1, unit: 'LIBRA', allowFraction: true
+  };
+  const huevo: Product = {
+    id: '21', code: 'GRN-HUV-UNI', name: 'Huevo', category: 'Abarrotes',
+    costPrice: 0.11, salePrice: 0.15, stock: 7, minStock: 6, unit: 'UNIDAD', allowFraction: false,
+    description: 'Promo: 6 x $1.00'
+  };
+
+  await act(async () => {
+    store.clearCart();
+    store.addProductToCart(arroz, 0.5);
+    store.addProductToCart(huevo, 1);
+    store.addProductToCart(huevo, 6, { unitPrice: Number((1 / 6).toFixed(6)), promoLabel: '6 × $1.00' });
+  });
+
+  assert.equal(store.cart.length, 3);
+  assert.equal(store.cart[0].quantity, 0.5);
+  assert.equal(store.cart[0].subtotal, 0.25);
+  assert.equal(store.cart[1].quantity, 1);
+  assert.equal(store.cart[1].subtotal, 0.15);
+  assert.equal(store.cart[2].quantity, 6);
+  assert.equal(store.cart[2].subtotal, 1.00);
+
+  // Attempting to add 1 more loose egg exceeds combined stock (7 eggs already reserved in 2 lines)
+  await act(async () => {
+    store.addProductToCart(huevo, 1);
+  });
+  assert.equal(store.cart[1].quantity, 1);
+  assert.match(store.toastMessage!, /Solo hay 7/);
+});
+
+test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 or by dollar value', async (t) => {
+  const arrozBp: BackendProduct = {
+    id_producto: 30, id_categoria: 1, categoria_nombre: 'Abarrotes', codigo_interno: 'GRN-ARR',
+    nombre: 'Arroz Conejo', unidad_medida: 'LIBRA', precio_compra_actual: 0.5, precio_venta_actual: 0.75,
+    margen_minimo_porcentaje: 20, stock_minimo: 5, stock_actual: 20, permite_fraccion: true, activo: true,
+    codigos_barras: []
+  };
+  const huevoBp: BackendProduct = {
+    id_producto: 31, id_categoria: 1, categoria_nombre: 'Abarrotes', codigo_interno: 'GRN-HUV',
+    nombre: 'Huevo Blanco', descripcion: 'Promo: 6 x $1.00', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 0.11, precio_venta_actual: 0.15, margen_minimo_porcentaje: 20,
+    stock_minimo: 6, stock_actual: 12, permite_fraccion: false, activo: true, codigos_barras: []
+  };
+  t.mock.method(api, 'getProductos', async () => [arrozBp, huevoBp]);
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+  await act(async () => {
+    store.clearCart();
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  // Trigger quick combo button for Huevo Blanco (6 x $1.00)
+  const comboBtn = renderer.root.findAllByType('button').find(
+    btn => textOf(btn).includes('Combo 6 × $1.00')
+  );
+  assert.ok(comboBtn, 'Expected quick combo button in BulkSaleModal');
+  await act(async () => {
+    comboBtn.props.onClick({ stopPropagation() {} });
+  });
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].product.name, 'Huevo Blanco');
+  assert.equal(store.cart[0].quantity, 6);
+  assert.equal(store.cart[0].subtotal, 1.00);
 });

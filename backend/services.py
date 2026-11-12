@@ -191,11 +191,11 @@ def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
 
         cursor.execute(
             """INSERT INTO PRODUCTOS (
-                IDCategoria, CodigoInterno, Nombre, Descripcion, Marca, UnidadMedida,
+                IDCategoria, IDProveedor, CodigoInterno, Nombre, Descripcion, Marca, UnidadMedida,
                 PrecioCompraActual, PrecioVentaActual, MargenMinimoPorcentaje, StockMinimo, StockActual, PermiteFraccion, Activo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
             (
-                data.id_categoria, codigo_interno, data.nombre, data.descripcion, data.marca,
+                data.id_categoria, data.id_proveedor, codigo_interno, data.nombre, data.descripcion, data.marca,
                 data.unidad_medida, data.precio_compra_actual, data.precio_venta_actual,
                 data.margen_minimo_porcentaje, data.stock_minimo, stock_init, int(data.permite_fraccion)
             )

@@ -1,0 +1,558 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  Scale,
+  Search,
+  X,
+  PackageOpen,
+  DollarSign,
+  Tag,
+  Plus,
+  AlertTriangle,
+  ArrowRight
+} from 'lucide-react';
+import { useStore } from '../../context/StoreContext';
+import { Product } from '../../types';
+
+export interface ParsedPromo {
+  qty: number;
+  total: number;
+  label: string;
+}
+
+export function parsePromoFromDescription(description?: string): ParsedPromo | null {
+  if (!description) return null;
+  const match = description.match(/Promo:\s*(\d+)\s*[xX×]\s*\$\s*(\d+(?:[.,]\d+)?)/i);
+  if (!match) return null;
+  const qty = parseInt(match[1], 10);
+  const total = parseFloat(match[2].replace(',', '.'));
+  if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(total) || total <= 0) return null;
+  return { qty, total, label: `${qty} × $${total.toFixed(2)}` };
+}
+
+export function formatUnitShort(unit?: string): string {
+  const u = (unit || 'UNIDAD').toUpperCase();
+  if (u === 'LIBRA') return 'lb';
+  if (u === 'KG') return 'kg';
+  if (u === 'GALON') return 'gal';
+  return 'un';
+}
+
+interface BulkSaleModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose }) => {
+  const { products, addProductToCart, setActiveScreen } = useStore();
+  const [tab, setTab] = useState<'bulk' | 'all_unbarcoded'>('bulk');
+  const [search, setSearch] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [weightInput, setWeightInput] = useState<string>('1');
+  const [dollarInput, setDollarInput] = useState<string>('1.00');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const unbarcodedProducts = useMemo(() => {
+    return products.filter(p => !p.barcode || p.barcode.trim() === '');
+  }, [products]);
+
+  const bulkProducts = useMemo(() => {
+    return unbarcodedProducts.filter(p => {
+      const unit = (p.unit || '').toUpperCase();
+      return (
+        Boolean(p.allowFraction) ||
+        unit === 'LIBRA' ||
+        unit === 'KG' ||
+        unit === 'GALON' ||
+        p.category === 'Frutas y Verduras' ||
+        Boolean(parsePromoFromDescription(p.description))
+      );
+    });
+  }, [unbarcodedProducts]);
+
+  const filteredList = useMemo(() => {
+    const base = tab === 'bulk' ? bulkProducts : unbarcodedProducts;
+    const q = search.trim().toLowerCase();
+    const matched = !q
+      ? base
+      : base.filter(
+          p =>
+            p.name.toLowerCase().includes(q) ||
+            p.code.toLowerCase().includes(q) ||
+            p.category.toLowerCase().includes(q)
+        );
+    // Keep available stock first, then alphabetical
+    return [...matched].sort((a, b) => {
+      const aHas = a.stock > 0 ? 1 : 0;
+      const bHas = b.stock > 0 ? 1 : 0;
+      if (aHas !== bHas) return bHas - aHas;
+      return a.name.localeCompare(b.name);
+    });
+  }, [tab, bulkProducts, unbarcodedProducts, search]);
+
+  const selectedProduct: Product | null = useMemo(() => {
+    if (!filteredList.length) return null;
+    if (selectedProductId) {
+      const found = filteredList.find(p => p.id === selectedProductId);
+      if (found) return found;
+    }
+    return filteredList[0];
+  }, [filteredList, selectedProductId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSearch('');
+    const t = setTimeout(() => searchRef.current?.focus(), 40);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!selectedProduct) return;
+    setWeightInput(selectedProduct.allowFraction ? '0.5' : '1');
+    setDollarInput('1.00');
+  }, [selectedProduct?.id]);
+
+  if (!isOpen) return null;
+
+  const selectedPromo = selectedProduct ? parsePromoFromDescription(selectedProduct.description) : null;
+  const selectedUnitShort = formatUnitShort(selectedProduct?.unit);
+  const weightNum = parseFloat(weightInput.replace(',', '.')) || 0;
+  const dollarNum = parseFloat(dollarInput.replace(',', '.')) || 0;
+
+  const computeDollarSelection = (prod: Product, dollars: number) => {
+    if (!Number.isFinite(dollars) || dollars <= 0) return null;
+    const promo = parsePromoFromDescription(prod.description);
+    if (promo && Math.abs(dollars % promo.total) < 1e-4) {
+      const mult = Math.round(dollars / promo.total);
+      if (mult >= 1) {
+        const qty = mult * promo.qty;
+        return {
+          qty,
+          unitPrice: Number((promo.total / promo.qty).toFixed(6)),
+          subtotal: Number((mult * promo.total).toFixed(2)),
+          promoLabel: mult === 1 ? promo.label : `${mult}×(${promo.label})`
+        };
+      }
+    }
+    if (prod.salePrice <= 0) return null;
+    if (prod.allowFraction) {
+      const qty = Number((dollars / prod.salePrice).toFixed(3));
+      if (qty <= 0) return null;
+      return {
+        qty,
+        unitPrice: prod.salePrice,
+        subtotal: Number((qty * prod.salePrice).toFixed(2)),
+        promoLabel: `$${dollars.toFixed(2)}`
+      };
+    }
+    const qty = Math.floor(dollars / prod.salePrice + 1e-6);
+    if (qty <= 0) return null;
+    return {
+      qty,
+      unitPrice: prod.salePrice,
+      subtotal: Number((qty * prod.salePrice).toFixed(2)),
+      promoLabel: undefined
+    };
+  };
+
+  const handleAddWeight = (qtyOverride?: number) => {
+    if (!selectedProduct) return;
+    const qty = qtyOverride ?? weightNum;
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    addProductToCart(selectedProduct, qty);
+    if (selectedProduct.stock > 0) onClose();
+  };
+
+  const handleAddPromo = (prod: Product, promo: ParsedPromo) => {
+    const unitPrice = Number((promo.total / promo.qty).toFixed(6));
+    addProductToCart(prod, promo.qty, { unitPrice, promoLabel: promo.label });
+    if (prod.stock >= promo.qty) onClose();
+  };
+
+  const handleAddByDollar = (dollarsOverride?: number) => {
+    if (!selectedProduct) return;
+    const d = dollarsOverride ?? dollarNum;
+    const calc = computeDollarSelection(selectedProduct, d);
+    if (!calc) return;
+    addProductToCart(selectedProduct, calc.qty, {
+      unitPrice: calc.unitPrice,
+      promoLabel: calc.promoLabel
+    });
+    if (selectedProduct.stock >= calc.qty) onClose();
+  };
+
+  const dollarPreview = selectedProduct ? computeDollarSelection(selectedProduct, dollarNum) : null;
+  const fractionPresets = [0.25, 0.5, 1, 1.5, 2, 3];
+  const unitPresets = [1, 2, 3, 4, 6, 9, 12];
+  const dollarPresets = [0.25, 0.5, 1.0, 1.5, 2.0, 5.0];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-3 sm:p-5"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-[var(--ui-chrome)] text-white px-5 py-3.5 flex items-center justify-between border-b border-[var(--ui-border-strong)] shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[var(--ui-brand)] flex items-center justify-center text-[var(--ui-mint)]">
+              <Scale className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="font-bold text-sm sm:text-base leading-tight">
+                Venta a Granel, Peso y Productos sin Código de Barras
+              </h2>
+              <p className="text-[11px] text-white/70">
+                Vende por libra, galón, unidades sueltas, valor en dólares o combos rápidos
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+            title="Cerrar (ESC)"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Search & Tabs */}
+        <div className="p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-col sm:flex-row gap-3 items-stretch sm:items-center shrink-0">
+          <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0">
+            <button
+              onClick={() => setTab('bulk')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                tab === 'bulk'
+                  ? 'bg-[var(--ui-brand)] text-white shadow-xs'
+                  : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
+              }`}
+            >
+              ⚖️ Granel y Combos ({bulkProducts.length})
+            </button>
+            <button
+              onClick={() => setTab('all_unbarcoded')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                tab === 'all_unbarcoded'
+                  ? 'bg-[var(--ui-brand)] text-white shadow-xs'
+                  : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
+              }`}
+            >
+              📦 Todos sin Código ({unbarcodedProducts.length})
+            </button>
+          </div>
+
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar arroz, tomate, huevo, maduro, lenteja, limón..."
+              className="w-full pl-9 pr-8 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl text-sm text-[var(--ui-text)] outline-none"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-2.5 text-[var(--ui-muted)] hover:text-[var(--ui-text)]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Content Split */}
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+          {/* Left Product List */}
+          <div className="lg:col-span-7 overflow-y-auto p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-[var(--ui-border)]">
+            {filteredList.length === 0 ? (
+              <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center text-[var(--ui-muted)] p-6">
+                <PackageOpen className="w-10 h-10 mb-2 opacity-40" />
+                <p className="font-semibold text-sm text-[var(--ui-text)]">No se encontraron productos sin código</p>
+                <p className="text-xs mt-1">Prueba cambiando de pestaña o buscando otro nombre.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {filteredList.map(prod => {
+                  const promo = parsePromoFromDescription(prod.description);
+                  const unitShort = formatUnitShort(prod.unit);
+                  const isSelected = selectedProduct?.id === prod.id;
+                  const outOfStock = prod.stock <= 0;
+
+                  return (
+                    <div
+                      key={prod.id}
+                      onClick={() => setSelectedProductId(prod.id)}
+                      className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                        isSelected
+                          ? 'border-[var(--ui-brand)] bg-[var(--ui-brand-soft)] shadow-xs ring-1 ring-[var(--ui-brand)]/30'
+                          : 'border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)]'
+                      } ${outOfStock ? 'opacity-75' : ''}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold text-xs sm:text-sm text-[var(--ui-text)] truncate">
+                            {prod.name}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] text-[var(--ui-secondary)] font-semibold uppercase">
+                              {prod.unit || 'UNIDAD'}
+                            </span>
+                            {outOfStock ? (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)]">
+                                Stock: 0
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-mono font-semibold text-[var(--ui-brand-strong)]">
+                                Stock: {prod.stock} {unitShort}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-mono font-black text-sm text-[var(--ui-brand-strong)]">
+                            ${prod.salePrice.toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-[var(--ui-muted)]">por {unitShort}</div>
+                        </div>
+                      </div>
+
+                      {promo && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedProductId(prod.id);
+                            handleAddPromo(prod, promo);
+                          }}
+                          className="w-full py-1 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center justify-between transition-colors"
+                        >
+                          <span className="flex items-center gap-1">
+                            <Tag className="w-3 h-3" />
+                            Combo {promo.label}
+                          </span>
+                          <span className="text-[10px] underline">+ Agregar</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right Action Panel */}
+          <div className="lg:col-span-5 overflow-y-auto p-4 bg-[var(--ui-surface-muted)]/40 flex flex-col gap-4">
+            {selectedProduct ? (
+              <>
+                <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-mono text-[var(--ui-muted)]">{selectedProduct.code}</span>
+                      <h3 className="font-bold text-base text-[var(--ui-text)] leading-snug">
+                        {selectedProduct.name}
+                      </h3>
+                      <p className="text-xs text-[var(--ui-secondary)]">
+                        {selectedProduct.category} · Medida: <strong>{selectedProduct.unit || 'UNIDAD'}</strong>
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-black text-lg text-[var(--ui-brand-strong)]">
+                        ${selectedProduct.salePrice.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-[var(--ui-muted)]">/ {selectedUnitShort}</div>
+                    </div>
+                  </div>
+
+                  {selectedProduct.stock <= 0 ? (
+                    <div className="p-2.5 rounded-lg bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] text-[var(--ui-danger-text)] text-xs space-y-2">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Sin existencias en inventario (Stock 0)</span>
+                      </div>
+                      <p className="text-[11px] opacity-90">
+                        El control estricto está activo: carga existencias en Inventario o Recepción para poder venderlo.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          setActiveScreen('inventory');
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-border)] text-[var(--ui-text)] font-bold text-[11px] hover:bg-[var(--ui-surface-hover)]"
+                      >
+                        <span>Ir a Inventario a cargar stock</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-xs font-semibold text-[var(--ui-brand-strong)]">
+                      Disponible: <span className="font-mono font-bold">{selectedProduct.stock} {selectedUnitShort}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Combo 1-click if available */}
+                {selectedPromo && (
+                  <div className="bg-[var(--ui-surface)] border border-amber-500/40 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5" />
+                        Combo Promocional Directo
+                      </span>
+                      <span className="text-[11px] font-mono text-[var(--ui-muted)]">
+                        Descuenta {selectedPromo.qty} {selectedUnitShort}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={selectedProduct.stock < selectedPromo.qty}
+                      onClick={() => handleAddPromo(selectedProduct, selectedPromo)}
+                      className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Agregar {selectedPromo.label}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Mode 1: By weight or quantity */}
+                <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[var(--ui-text)] flex items-center gap-1.5">
+                      <Scale className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                      {selectedProduct.allowFraction
+                        ? `Por peso / cantidad (${selectedUnitShort})`
+                        : `Por cantidad (${selectedUnitShort})`}
+                    </span>
+                    {weightNum > 0 && (
+                      <span className="text-xs font-mono font-bold text-[var(--ui-brand-strong)]">
+                        Total: ${(weightNum * selectedProduct.salePrice).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {(selectedProduct.allowFraction ? fractionPresets : unitPresets).map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        disabled={selectedProduct.stock < preset}
+                        onClick={() => handleAddWeight(preset)}
+                        className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] hover:border-[var(--ui-brand)] hover:bg-[var(--ui-brand-soft)] disabled:opacity-40 disabled:cursor-not-allowed font-mono font-bold text-xs text-[var(--ui-text)] transition-colors"
+                      >
+                        {preset} {selectedUnitShort}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      type="number"
+                      step={selectedProduct.allowFraction ? '0.01' : '1'}
+                      min={selectedProduct.allowFraction ? '0.01' : '1'}
+                      max={selectedProduct.stock > 0 ? selectedProduct.stock : undefined}
+                      value={weightInput}
+                      onChange={(e) => setWeightInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddWeight();
+                        }
+                      }}
+                      className="flex-1 px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl font-mono font-bold text-sm text-[var(--ui-text)] outline-none"
+                    />
+                    <button
+                      type="button"
+                      disabled={selectedProduct.stock <= 0 || weightNum <= 0}
+                      onClick={() => handleAddWeight()}
+                      className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Agregar</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mode 2: By dollar amount ("Deme $...") */}
+                <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[var(--ui-text)] flex items-center gap-1.5">
+                      <DollarSign className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                      Vender por Valor ("Deme $...")
+                    </span>
+                    {dollarPreview && (
+                      <span className="text-[11px] font-mono font-bold text-[var(--ui-brand-strong)]">
+                        = {dollarPreview.qty} {selectedUnitShort}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {dollarPresets.map(d => {
+                      const sim = computeDollarSelection(selectedProduct, d);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          disabled={!sim || selectedProduct.stock < sim.qty}
+                          onClick={() => handleAddByDollar(d)}
+                          className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] hover:border-[var(--ui-brand)] hover:bg-[var(--ui-brand-soft)] disabled:opacity-40 disabled:cursor-not-allowed font-mono font-bold text-xs text-[var(--ui-text)] transition-colors"
+                        >
+                          ${d.toFixed(2)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-2 font-mono font-bold text-sm text-[var(--ui-muted)]">$</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.05"
+                        value={dollarInput}
+                        onChange={(e) => setDollarInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddByDollar();
+                          }
+                        }}
+                        className="w-full pl-7 pr-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl font-mono font-bold text-sm text-[var(--ui-text)] outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!dollarPreview || selectedProduct.stock < dollarPreview.qty}
+                      onClick={() => handleAddByDollar()}
+                      className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-chrome)] hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      <span>Vender ${dollarNum > 0 ? dollarNum.toFixed(2) : '0.00'}</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="h-full flex items-center justify-center text-xs text-[var(--ui-muted)]">
+                Selecciona un producto de la lista izquierda.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

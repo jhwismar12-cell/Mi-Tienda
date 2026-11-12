@@ -736,13 +736,15 @@ export const ReceptionScreen: React.FC = () => {
                       <td className="px-4 py-2.5 text-center">
                         <input
                           type="number"
-                          min="1"
+                          step="0.01"
+                          min="0.01"
                           value={item.quantityReceived}
-                          onChange={(e) =>
-                            handleUpdateItem(item.id, {
-                              quantityReceived: Math.max(1, parseInt(e.target.value) || 1)
-                            })
-                          }
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value.replace(',', '.'));
+                            if (Number.isFinite(val) && val > 0) {
+                              handleUpdateItem(item.id, { quantityReceived: Number(val.toFixed(3)) });
+                            }
+                          }}
                           className="w-20 px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded font-mono font-black text-center text-sm outline-none text-[var(--ui-text)]"
                         />
                       </td>

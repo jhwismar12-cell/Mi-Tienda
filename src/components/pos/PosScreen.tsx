@@ -16,10 +16,12 @@ import {
   Unlock,
   AlertTriangle,
   PackageX,
-  Truck
+  Truck,
+  Scale
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
+import { BulkSaleModal, formatUnitShort } from './BulkSaleModal';
 
 export const PosScreen: React.FC = () => {
   const {
@@ -47,11 +49,12 @@ export const PosScreen: React.FC = () => {
   } = useStore();
 
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   // Calculations
   const totalArticles = cart.length;
-  const totalUnits = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalUnits = Number(cart.reduce((sum, item) => sum + item.quantity, 0).toFixed(3));
   const subtotal = Number(cart.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2));
   const totalCatalogStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
   
@@ -90,6 +93,9 @@ export const PosScreen: React.FC = () => {
         } else {
           showToast('El carrito está vacío');
         }
+      } else if (e.key === 'F6') {
+        e.preventDefault();
+        setIsBulkModalOpen(prev => !prev);
       } else if (e.key === 'F12') {
         e.preventDefault();
         closeShiftAndGenerateReport();
@@ -163,34 +169,49 @@ export const PosScreen: React.FC = () => {
           </div>
         )}
 
-        {/* Barcode Search Input */}
-        <form onSubmit={handleBarcodeSubmit} className="mb-4 relative group">
-          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--ui-muted)]">
-            <Barcode className="w-5 h-5" />
-          </div>
-          <input
-            ref={barcodeInputRef}
-            type="text"
-            value={barcodeInput}
-            onChange={(e) => setBarcodeInput(e.target.value)}
-            placeholder="Escanear código de barras o escribir 5*código..."
-            aria-label="Escanear código de barras o ingresar código y cantidad"
-            className="pos-scanner w-full pl-11 pr-20 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
-          />
-          <div className="absolute inset-y-0 right-0 pr-3 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setIsGlobalSearchOpen(true)}
-              className="p-1 hover:bg-[var(--ui-surface-hover)] rounded text-[var(--ui-muted)] transition-colors"
-              title="Buscar en catálogo (⌘K)"
-            >
-              <Search className="w-4 h-4" />
-            </button>
-            <span className="font-mono text-xs bg-[var(--ui-chrome-raised)] text-white px-2 py-1 rounded font-bold">
-              [F3]
+        {/* Barcode Search Input + Granel Trigger */}
+        <div className="mb-4 flex flex-col sm:flex-row gap-2">
+          <form onSubmit={handleBarcodeSubmit} className="relative group flex-1">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--ui-muted)]">
+              <Barcode className="w-5 h-5" />
+            </div>
+            <input
+              ref={barcodeInputRef}
+              type="text"
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              placeholder="Escanear código de barras o escribir 0.5*código..."
+              aria-label="Escanear código de barras o ingresar código y cantidad"
+              className="pos-scanner w-full pl-11 pr-20 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
+            />
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsGlobalSearchOpen(true)}
+                className="p-1 hover:bg-[var(--ui-surface-hover)] rounded text-[var(--ui-muted)] transition-colors"
+                title="Buscar en catálogo (⌘K)"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+              <span className="font-mono text-xs bg-[var(--ui-chrome-raised)] text-white px-2 py-1 rounded font-bold">
+                [F3]
+              </span>
+            </div>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => setIsBulkModalOpen(true)}
+            className="px-3.5 py-3 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+            title="Vender por peso, valor en dólares o productos sin código (F6)"
+          >
+            <Scale className="w-4 h-4 text-[var(--ui-mint)]" />
+            <span>Granel / Sin Código</span>
+            <span className="font-mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded font-bold">
+              [F6]
             </span>
-          </div>
-        </form>
+          </button>
+        </div>
 
         {/* Quick Access Bar (F1 - F4) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
@@ -272,10 +293,13 @@ export const PosScreen: React.FC = () => {
             ) : (
               cart.map((item, idx) => {
                 const isSelected = selectedCartIndex === idx;
+                const isFraction = Boolean(item.product.allowFraction);
+                const qtyStep = isFraction ? 0.5 : 1;
+                const unitShort = formatUnitShort(item.product.unit);
 
                 return (
                   <div
-                    key={item.product.id}
+                    key={`${item.product.id}-${item.unitPrice}-${item.promoLabel || 'base'}`}
                     onClick={() => setSelectedCartIndex(idx)}
                     className={`pos-cart-row grid grid-cols-12 items-center px-4 py-2.5 transition-colors cursor-pointer text-sm ${
                       isSelected
@@ -298,34 +322,47 @@ export const PosScreen: React.FC = () => {
                     {/* Description */}
                     <div className="col-span-4 font-medium text-[var(--ui-text)] truncate pr-2">
                       <span>{item.product.name}</span>
-                      {item.product.distributor && (
-                        <span className="block text-[10px] text-[var(--ui-muted)] font-normal truncate">
-                          {item.product.distributor}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono text-[var(--ui-muted)] uppercase">
+                          {unitShort}
                         </span>
-                      )}
+                        {item.promoLabel && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                            {item.promoLabel}
+                          </span>
+                        )}
+                        {item.product.distributor && (
+                          <span className="text-[10px] text-[var(--ui-muted)] font-normal truncate">
+                            · {item.product.distributor}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Quantity Controls */}
                     <div className="col-span-2 flex items-center justify-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => updateCartQuantity(idx, item.quantity - 1)}
+                        onClick={() => updateCartQuantity(idx, Number((item.quantity - qtyStep).toFixed(3)))}
                         className="w-6 h-6 rounded bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <input
                         type="number"
-                        min="1"
+                        step={isFraction ? '0.01' : '1'}
+                        min={isFraction ? '0.01' : '1'}
                         max={item.product.stock}
                         value={item.quantity}
                         onChange={(e) => {
-                          const val = parseInt(e.target.value) || 1;
-                          updateCartQuantity(idx, val);
+                          const val = parseFloat(e.target.value.replace(',', '.'));
+                          if (Number.isFinite(val) && val > 0) {
+                            updateCartQuantity(idx, val);
+                          }
                         }}
-                        className="w-10 text-center font-mono font-bold bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded py-0.5 text-xs outline-none focus:border-[var(--ui-brand)]"
+                        className="w-12 text-center font-mono font-bold bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded py-0.5 text-xs outline-none focus:border-[var(--ui-brand)]"
                       />
                       <button
-                        onClick={() => updateCartQuantity(idx, item.quantity + 1)}
+                        onClick={() => updateCartQuantity(idx, Number((item.quantity + qtyStep).toFixed(3)))}
                         className="w-6 h-6 rounded bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold"
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -539,6 +576,14 @@ export const PosScreen: React.FC = () => {
         </button>
 
       </div>
+
+      <BulkSaleModal
+        isOpen={isBulkModalOpen}
+        onClose={() => {
+          setIsBulkModalOpen(false);
+          barcodeInputRef.current?.focus();
+        }}
+      />
     </div>
   );
 };

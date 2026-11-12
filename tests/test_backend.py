@@ -706,6 +706,105 @@ class TestTiendaBackend(unittest.TestCase):
                 # Version local queda en 7, asi que pull_if_newer no descarga redundante
                 self.assertFalse(supabase_sync.pull_if_newer(services.DB_PATH))
 
+    def test_33_granel_combos_stock_estricto_y_actualizacion(self):
+        # 1. Crear producto a granel sin codigo de barras (Arroz 0.50/lb, stock 10.0)
+        arroz_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "codigo_interno": "GRN-ARR-TEST",
+            "nombre": "Arroz Maraqueño Test",
+            "unidad_medida": "LIBRA",
+            "permite_fraccion": True,
+            "precio_compra_actual": 0.35,
+            "precio_venta_actual": 0.50,
+            "stock_minimo": 5.0,
+            "stock_inicial": 10.0,
+            "codigos_barras": []
+        })
+        self.assertEqual(arroz_res.status_code, 200)
+        arroz = arroz_res.json()
+        self.assertEqual(arroz["unidad_medida"], "LIBRA")
+        self.assertTrue(arroz["permite_fraccion"])
+        self.assertEqual(arroz["codigos_barras"], [])
+
+        # 2. Crear producto con combo y stock 0 estricto (Huevo 0.15 c/u o Promo: 6 x $1.00)
+        huevo_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "codigo_interno": "GRN-HUV-TEST",
+            "nombre": "Huevo Test",
+            "descripcion": "Promo: 6 x $1.00",
+            "unidad_medida": "UNIDAD",
+            "permite_fraccion": False,
+            "precio_compra_actual": 0.11,
+            "precio_venta_actual": 0.15,
+            "stock_minimo": 12.0,
+            "stock_inicial": 0.0,
+            "codigos_barras": []
+        })
+        self.assertEqual(huevo_res.status_code, 200)
+        huevo = huevo_res.json()
+
+        # 3. Usar caja activa (o abrir si esta cerrada) y validar control estricto con stock 0
+        caja_activa = self.client.get("/api/caja/activa")
+        if caja_activa.status_code == 200 and caja_activa.json() and caja_activa.json().get("estado") == "ABIERTA":
+            id_caja = caja_activa.json()["id_sesion_caja"]
+        else:
+            caja_res = self.client.post("/api/caja/abrir", json={"monto_inicial": 20.0, "cajero_nombre": "Admin"})
+            self.assertEqual(caja_res.status_code, 200)
+            id_caja = caja_res.json()["id_sesion_caja"]
+
+        fail_sale = self.client.post("/api/ventas/cobrar", json={
+            "id_sesion_caja": id_caja,
+            "items": [{"id_producto": huevo["id_producto"], "cantidad": 1, "precio_unitario": 0.15}],
+            "metodo_pago": "EFECTIVO",
+            "monto_recibido": 1.0
+        })
+        self.assertEqual(fail_sale.status_code, 400)
+
+        # 4. Ajustar stock decimal (+2.5 lb arroz) y +7 huevos, luego cobrar fraccion + combo + suelto
+        adj_arroz = self.client.post("/api/inventario/ajuste", json={
+            "id_producto": arroz["id_producto"],
+            "tipo_ajuste": "AJUSTE_POSITIVO",
+            "cantidad": 2.5,
+            "motivo": "Prueba fraccion"
+        })
+        self.assertEqual(adj_arroz.status_code, 200)
+        self.assertAlmostEqual(adj_arroz.json()["stock_posterior"], 12.5, places=3)
+
+        adj_huevo = self.client.post("/api/inventario/ajuste", json={
+            "id_producto": huevo["id_producto"],
+            "tipo_ajuste": "AJUSTE_POSITIVO",
+            "cantidad": 7,
+            "motivo": "Ingreso inicial"
+        })
+        self.assertEqual(adj_huevo.status_code, 200)
+
+        sale_res = self.client.post("/api/ventas/cobrar", json={
+            "id_sesion_caja": id_caja,
+            "items": [
+                {"id_producto": arroz["id_producto"], "cantidad": 0.5, "precio_unitario": 0.50},
+                {"id_producto": huevo["id_producto"], "cantidad": 1, "precio_unitario": 0.15},
+                {"id_producto": huevo["id_producto"], "cantidad": 6, "precio_unitario": round(1.0 / 6.0, 6)},
+            ],
+            "metodo_pago": "EFECTIVO",
+            "monto_recibido": 2.0
+        })
+        self.assertEqual(sale_res.status_code, 200)
+        self.assertAlmostEqual(sale_res.json()["total"], 1.40, places=2)
+
+        # Verificar stock actualizado tras descuento fraccionario y combo
+        prods = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
+        self.assertAlmostEqual(prods[arroz["id_producto"]]["stock_actual"], 12.0, places=3)
+        self.assertAlmostEqual(prods[huevo["id_producto"]]["stock_actual"], 0.0, places=3)
+
+        # 5. Actualizar unidad_medida, permite_fraccion y descripcion via PUT
+        upd_res = self.client.put(f"/api/productos/{huevo['id_producto']}", json={
+            "descripcion": "Promo: 6 x $1.00 | Cartón $4.20",
+            "unidad_medida": "UNIDAD",
+            "permite_fraccion": False
+        })
+        self.assertEqual(upd_res.status_code, 200)
+        self.assertEqual(upd_res.json()["descripcion"], "Promo: 6 x $1.00 | Cartón $4.20")
+
 if __name__ == "__main__":
     unittest.main()
 

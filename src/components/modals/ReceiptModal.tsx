@@ -71,7 +71,7 @@ export const ReceiptModal: React.FC = () => {
               {lastCompletedSale.items.map((item, idx) => (
                 <div key={idx} className="grid grid-cols-12 text-[11px]">
                   <span className="col-span-6 truncate font-medium">{item.name}</span>
-                  <span className="col-span-2 text-center">{item.quantity}</span>
+                  <span className="col-span-2 text-center">{Number(item.quantity.toFixed(3))}</span>
                   <span className="col-span-2 text-right">${item.unitPrice.toFixed(2)}</span>
                   <span className="col-span-2 text-right font-bold">${item.subtotal.toFixed(2)}</span>
                 </div>
@@ -82,7 +82,7 @@ export const ReceiptModal: React.FC = () => {
             <div className="space-y-1 border-b border-dashed border-[var(--ui-border)] pb-2 text-xs">
               <div className="flex justify-between">
                 <span>Total Artículos:</span>
-                <span>{lastCompletedSale.totalArticles} ({lastCompletedSale.totalUnits} un)</span>
+                <span>{lastCompletedSale.totalArticles} ({Number(lastCompletedSale.totalUnits.toFixed(3))} un)</span>
               </div>
               <div className="flex justify-between font-bold text-sm pt-1 text-[var(--ui-brand-strong)]">
                 <span>TOTAL PAGADO:</span>

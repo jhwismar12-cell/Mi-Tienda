@@ -63,7 +63,7 @@ export interface StoreContextType {
   // POS Cart
   cart: CartItem[];
   addToCartByBarcodeOrCode: (code: string) => Promise<{ success: boolean; code?: string }>;
-  addProductToCart: (product: Product, quantity?: number) => void;
+  addProductToCart: (product: Product, quantity?: number, options?: { unitPrice?: number; promoLabel?: string }) => void;
   updateCartQuantity: (index: number, quantity: number) => void;
   removeFromCart: (index: number) => void;
   clearCart: () => void;
@@ -173,6 +173,8 @@ function mapBackendProduct(bp: BackendProduct): Product {
     stock: bp.stock_actual,
     minStock: bp.stock_minimo,
     unit: bp.unidad_medida,
+    description: bp.descripcion || undefined,
+    allowFraction: Boolean(bp.permite_fraccion),
     lastUpdated: bp.fecha_modificacion
   };
 }
@@ -605,23 +607,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // Cart operations
   const addProductToCart = useCallback(
-    (product: Product, quantity = 1) => {
+    (product: Product, quantity = 1, options?: { unitPrice?: number; promoLabel?: string }) => {
       if (product.stock <= 0) {
         sounds.playErrorBeep();
         showToast(`❌ "${product.name}" tiene Stock 0. Realiza un ajuste o recepción de compra.`);
         return;
       }
 
+      const qty = Number(quantity.toFixed(3));
+      if (!Number.isFinite(qty) || qty <= 0) return;
+      const effectivePrice = options?.unitPrice !== undefined ? options.unitPrice : product.salePrice;
+      const promoLabel = options?.promoLabel;
+
       setCart(prev => {
-        const existingIdx = prev.findIndex(item => item.product.id === product.id);
+        const totalInCart = prev
+          .filter(item => item.product.id === product.id)
+          .reduce((sum, item) => sum + item.quantity, 0);
+        if (Number((totalInCart + qty).toFixed(3)) > product.stock + 1e-6) {
+          sounds.playErrorBeep();
+          showToast(`⚠️ Solo hay ${product.stock} en stock de "${product.name}".`);
+          return prev;
+        }
+
+        const existingIdx = prev.findIndex(
+          item =>
+            item.product.id === product.id &&
+            Math.abs(item.unitPrice - effectivePrice) < 1e-5 &&
+            (item.promoLabel || '') === (promoLabel || '')
+        );
         if (existingIdx >= 0) {
-          const currentQty = prev[existingIdx].quantity;
-          const newQty = currentQty + quantity;
-          if (newQty > product.stock) {
-            sounds.playErrorBeep();
-            showToast(`⚠️ Solo hay ${product.stock} unidades en stock.`);
-            return prev;
-          }
+          const newQty = Number((prev[existingIdx].quantity + qty).toFixed(3));
           const updated = [...prev];
           updated[existingIdx] = {
             ...updated[existingIdx],
@@ -636,9 +651,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         sounds.playScannerBeep();
         const newItem: CartItem = {
           product,
-          quantity,
-          unitPrice: product.salePrice,
-          subtotal: Number((quantity * product.salePrice).toFixed(2))
+          quantity: qty,
+          unitPrice: effectivePrice,
+          subtotal: Number((qty * effectivePrice).toFixed(2)),
+          promoLabel
         };
         const nextCart = [...prev, newItem];
         setSelectedCartIndex(nextCart.length - 1);
@@ -656,10 +672,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       let quantity = 1;
       let targetCode = raw.toUpperCase();
 
-      // Multiplier syntax: e.g. "5*786100123", "5X786100123", "12*BEB-COC-3000"
-      const multiplierMatch = raw.match(/^(\d+(?:\.\d+)?)\s*[\*xX]\s*(.+)$/);
+      // Multiplier syntax: e.g. "5*786100123", "5X786100123", "0.5*GRN-ARR-MAR"
+      const multiplierMatch = raw.match(/^(\d+(?:[.,]\d+)?)\s*[\*xX]\s*(.+)$/);
       if (multiplierMatch) {
-        quantity = Math.max(1, parseFloat(multiplierMatch[1]) || 1);
+        const parsedMult = parseFloat(multiplierMatch[1].replace(',', '.'));
+        quantity = parsedMult > 0 ? Number(parsedMult.toFixed(3)) : 1;
         targetCode = multiplierMatch[2].trim().toUpperCase();
       }
 
@@ -739,7 +756,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, [addToCartByBarcodeOrCode]);
 
   const updateCartQuantity = useCallback((index: number, quantity: number) => {
-    if (quantity <= 0) {
+    const nextQty = Number(quantity.toFixed(3));
+    if (!Number.isFinite(nextQty) || nextQty <= 0) {
       removeFromCart(index);
       return;
     }
@@ -747,16 +765,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setCart(prev => {
       if (index < 0 || index >= prev.length) return prev;
       const target = prev[index];
-      if (quantity > target.product.stock) {
+      const otherRowsQty = prev
+        .filter((it, i) => i !== index && it.product.id === target.product.id)
+        .reduce((sum, it) => sum + it.quantity, 0);
+      if (Number((otherRowsQty + nextQty).toFixed(3)) > target.product.stock + 1e-6) {
         sounds.playErrorBeep();
-        showToast(`⚠️ Solo hay ${target.product.stock} unidades disponibles de "${target.product.name}".`);
+        showToast(`⚠️ Solo hay ${target.product.stock} disponible(s) de "${target.product.name}".`);
         return prev;
       }
       const updated = [...prev];
       updated[index] = {
         ...updated[index],
-        quantity,
-        subtotal: Number((quantity * updated[index].unitPrice).toFixed(2))
+        quantity: nextQty,
+        subtotal: Number((nextQty * updated[index].unitPrice).toFixed(2))
       };
       return updated;
     });
@@ -808,8 +829,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return null;
     }
 
-    const subtotal = cart.reduce((acc, item) => acc + item.subtotal, 0);
-    const totalUnits = cart.reduce((acc, item) => acc + item.quantity, 0);
+    const subtotal = Number(cart.reduce((acc, item) => acc + item.subtotal, 0).toFixed(2));
+    const totalUnits = Number(cart.reduce((acc, item) => acc + item.quantity, 0).toFixed(3));
     const cashNum = paymentMethod === 'cash' ? Number(cashReceived) : subtotal;
     if (!Number.isFinite(cashNum) || cashNum < 0 || (paymentMethod === 'cash' && Math.round(cashNum * 100) < Math.round(subtotal * 100))) {
       showToast('El efectivo recibido es insuficiente para cubrir el total.');
@@ -900,10 +921,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (!selectedCategory) {
         throw new Error(`La categoría "${prodData.category}" no está disponible. Actualiza la tienda y vuelve a intentar.`);
       }
+      const unit = prodData.unit || 'UNIDAD';
+      const allowFraction =
+        prodData.allowFraction ?? (unit === 'LIBRA' || unit === 'KG' || unit === 'GALON');
       const created = await api.crearProducto({
         id_categoria: selectedCategory.id_categoria,
+        id_proveedor: prodData.providerId,
         codigo_interno: prodData.code,
         nombre: prodData.name,
+        descripcion: prodData.description,
+        unidad_medida: unit,
+        permite_fraccion: allowFraction,
         precio_compra_actual: prodData.costPrice,
         precio_venta_actual: prodData.salePrice,
         stock_minimo: prodData.minStock || 5,
@@ -928,6 +956,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         await api.actualizarProducto(numId, {
           nombre: updates.name,
           codigo_interno: updates.code,
+          descripcion: updates.description,
+          unidad_medida: updates.unit,
+          permite_fraccion: updates.allowFraction,
+          id_proveedor: updates.providerId,
           precio_compra_actual: updates.costPrice,
           precio_venta_actual: updates.salePrice,
           stock_minimo: updates.minStock,

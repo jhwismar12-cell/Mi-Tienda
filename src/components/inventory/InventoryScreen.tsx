@@ -34,7 +34,7 @@ import {
   ScanLine
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { Product, Category, KardexMovement } from '../../types';
+import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types';
 
 type SortOption = 
   | 'name_asc' 
@@ -93,7 +93,7 @@ export const InventoryScreen: React.FC = () => {
     type: 'plus' | 'minus';
     productId: string;
   } | null>(null);
-  const [adjustAmount, setAdjustAmount] = useState(1);
+  const [adjustAmount, setAdjustAmount] = useState<string>('1');
   const [adjustReason, setAdjustReason] = useState('');
 
   // Customer Return Modal
@@ -108,6 +108,9 @@ export const InventoryScreen: React.FC = () => {
   const [editBarcode, setEditBarcode] = useState<string>('');
   const [editSalePrice, setEditSalePrice] = useState<string>('');
   const [editCostPrice, setEditCostPrice] = useState<string>('');
+  const [editUnit, setEditUnit] = useState<string>('UNIDAD');
+  const [editAllowFraction, setEditAllowFraction] = useState<boolean>(false);
+  const [editDescription, setEditDescription] = useState<string>('');
 
   const openEditModal = (product: Product, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -115,6 +118,9 @@ export const InventoryScreen: React.FC = () => {
     setEditBarcode(product.barcode || '');
     setEditSalePrice(product.salePrice.toFixed(2));
     setEditCostPrice(product.costPrice.toFixed(2));
+    setEditUnit(product.unit || 'UNIDAD');
+    setEditAllowFraction(Boolean(product.allowFraction));
+    setEditDescription(product.description || '');
   };
 
   const handleSaveProductEdit = async (e: React.FormEvent) => {
@@ -132,7 +138,10 @@ export const InventoryScreen: React.FC = () => {
     await updateProduct(editProductModal.id, {
       salePrice: sPrice,
       costPrice: cPrice,
-      barcode: cleanBc
+      barcode: cleanBc,
+      unit: editUnit,
+      allowFraction: editAllowFraction,
+      description: editDescription.trim() || ''
     });
 
     showToast(`Producto "${editProductModal.name}" actualizado con éxito`);
@@ -140,7 +149,7 @@ export const InventoryScreen: React.FC = () => {
   };
 
   // Categories list
-  const categories: Category[] = ['Abarrotes', 'Lácteos', 'Bebidas', 'Limpieza', 'Snacks', 'Panadería', 'Embutidos', 'Condimentos', 'Hogar'];
+  const categories = STORE_CATEGORIES;
 
   // Suppliers list & counts
   const suppliersList = useMemo(() => {
@@ -258,12 +267,18 @@ export const InventoryScreen: React.FC = () => {
 
   const handleConfirmAdjust = () => {
     if (!showAdjustModal || !showAdjustModal.productId) return;
-    const delta = showAdjustModal.type === 'plus' ? adjustAmount : -adjustAmount;
+    const parsedQty = parseFloat(adjustAmount.replace(',', '.'));
+    if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+      showToast('Ingresa una cantidad mayor a 0');
+      return;
+    }
+    const cleanQty = Number(parsedQty.toFixed(3));
+    const delta = showAdjustModal.type === 'plus' ? cleanQty : -cleanQty;
     const movementType = showAdjustModal.type === 'plus' ? 'AJUSTE_POSITIVO' : adjustReason.toLowerCase().includes('daño') || adjustReason.toLowerCase().includes('merma') ? 'DAÑO' : 'AJUSTE_NEGATIVO';
     
     adjustStock(showAdjustModal.productId, delta, movementType, adjustReason);
     setShowAdjustModal(null);
-    setAdjustAmount(1);
+    setAdjustAmount('1');
     setAdjustReason('');
   };
 
@@ -1101,13 +1116,14 @@ export const InventoryScreen: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-[var(--ui-secondary)] mb-1">
-                Cantidad a {showAdjustModal.type === 'plus' ? 'Ingresar' : 'Restar'} (unidades)
+                Cantidad a {showAdjustModal.type === 'plus' ? 'Ingresar' : 'Restar'} (acepta decimales, ej: 25.5)
               </label>
               <input
                 type="number"
-                min="1"
+                step="0.01"
+                min="0.01"
                 value={adjustAmount}
-                onChange={(e) => setAdjustAmount(Math.max(1, parseInt(e.target.value) || 1))}
+                onChange={(e) => setAdjustAmount(e.target.value)}
                 className="w-full px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg font-mono font-bold text-base outline-none focus:border-[var(--ui-brand)]"
               />
             </div>
@@ -1335,6 +1351,52 @@ export const InventoryScreen: React.FC = () => {
                     className="w-full pl-7 pr-3 py-2 bg-[var(--ui-surface)] border-2 border-[var(--ui-brand)] rounded-xl font-mono font-black text-base text-[var(--ui-brand-strong)] outline-none focus:ring-2 focus:ring-[var(--ui-brand)]/20"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+                    Unidad de Medida
+                  </label>
+                  <select
+                    value={editUnit}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setEditUnit(next);
+                      setEditAllowFraction(next === 'LIBRA' || next === 'KG' || next === 'GALON');
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs outline-none focus:border-[var(--ui-brand)]"
+                  >
+                    <option value="UNIDAD">UNIDAD</option>
+                    <option value="LIBRA">LIBRA</option>
+                    <option value="KG">KG</option>
+                    <option value="GALON">GALON</option>
+                  </select>
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-[var(--ui-text)]">
+                    <input
+                      type="checkbox"
+                      checked={editAllowFraction}
+                      onChange={(e) => setEditAllowFraction(e.target.checked)}
+                      className="rounded border-[var(--ui-border)] accent-[var(--ui-brand)] w-3.5 h-3.5"
+                    />
+                    <span>Permite peso decimal</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+                  Descripción / Combo Promo (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Promo: 6 x $1.00"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs outline-none focus:border-[var(--ui-brand)]"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-[var(--ui-border)]">
