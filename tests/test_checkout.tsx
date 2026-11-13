@@ -1069,3 +1069,92 @@ test('AltaAlVueloModal and BulkSaleModal list distributors and forward selected 
   assert.equal(createdPayloads[1].id_proveedor, 5);
   assert.equal(store.cart[0].product.distributor, 'Papelera Nacional');
 });
+
+test('InventoryScreen edit product modal allows renaming product, switching or creating distributor, and clearing distributor', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  const updatePayloads: any[] = [];
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 3, ruc_ci: '1790001112001', razon_social: 'Arca Continental' },
+    { id_proveedor: 8, ruc_ci: '0998887776001', razon_social: 'Pronaca' }
+  ]);
+  t.mock.method(api, 'crearProveedor', async (payload: any) => ({
+    id_proveedor: 42,
+    ruc_ci: payload.ruc_ci || 'RUC-42',
+    razon_social: payload.razon_social
+  }));
+  t.mock.method(api, 'actualizarProducto', async (_id: number, payload: any) => {
+    updatePayloads.push(payload);
+    return {
+      ...createdProduct('Bebidas', 2),
+      id_producto: 1,
+      codigo_interno: 'INTERNAL',
+      codigos_barras: ['BARCODE'],
+      nombre: payload.nombre || 'Producto',
+      id_proveedor: payload.id_proveedor ?? undefined,
+      proveedor_nombre:
+        payload.id_proveedor === 42
+          ? 'Nuevo Distribuidor Editado'
+          : payload.id_proveedor === 8
+            ? 'Pronaca'
+            : undefined
+    };
+  });
+
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><InventoryScreen /></StoreProvider>);
+  });
+
+  // 1. Open edit modal and change name + create new distributor inline
+  const editBtns = renderer.root.findAllByProps({ title: 'Editar Código de Barras y Precio' });
+  await act(async () => {
+    editBtns[0].props.onClick({ stopPropagation() {} });
+  });
+
+  const nameInput = renderer.root.findByProps({ 'aria-label': 'Nombre del producto' });
+  const provSelect = renderer.root.findByProps({ 'aria-label': 'Distribuidor' });
+  assert.ok(provSelect.findAllByType('option').some((o) => o.props.value === '8'));
+
+  await act(async () => {
+    nameInput.props.onChange({ target: { value: 'Producto Renombrado 2L' } });
+    provSelect.props.onChange({ target: { value: '__NEW__' } });
+  });
+
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Nombre del nuevo distribuidor' }).props.onChange({
+      target: { value: 'Nuevo Distribuidor Editado' }
+    });
+  });
+
+  const saveProvBtn = renderer.root.findAllByType('button').find((b) =>
+    b.findAllByType('span').some((s) => s.children.join('') === 'Guardar Distribuidor')
+  );
+  await act(async () => {
+    await saveProvBtn!.props.onClick();
+  });
+
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(updatePayloads[0].nombre, 'Producto Renombrado 2L');
+  assert.equal(updatePayloads[0].id_proveedor, 42);
+  assert.equal(store.products[0].name, 'Producto Renombrado 2L');
+  assert.equal(store.products[0].distributor, 'Nuevo Distribuidor Editado');
+
+  // 2. Re-open edit modal and clear distributor ("Sin distribuidor / General")
+  await act(async () => {
+    renderer.root.findAllByProps({ title: 'Editar Código de Barras y Precio' })[0].props.onClick({ stopPropagation() {} });
+  });
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Distribuidor' }).props.onChange({ target: { value: '' } });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(updatePayloads[1].id_proveedor, null);
+  assert.equal(store.products[0].providerId, undefined);
+  assert.equal(store.products[0].distributor, undefined);
+});

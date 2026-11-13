@@ -944,27 +944,46 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const updateProduct = async (id: string, updates: Partial<Product>) => {
+    let mappedFromBackend: Product | null = null;
     try {
       const numId = parseInt(id);
       if (!isNaN(numId)) {
-        await api.actualizarProducto(numId, {
+        const hasProviderUpdate = 'providerId' in updates;
+        const updatedBackend = await api.actualizarProducto(numId, {
           nombre: updates.name,
           codigo_interno: updates.code,
           descripcion: updates.description,
           unidad_medida: updates.unit,
           permite_fraccion: updates.allowFraction,
-          id_proveedor: updates.providerId,
+          id_proveedor: hasProviderUpdate ? (updates.providerId ?? null) : undefined,
           precio_compra_actual: updates.costPrice,
           precio_venta_actual: updates.salePrice,
           stock_minimo: updates.minStock,
           codigos_barras: updates.barcode !== undefined ? (updates.barcode ? [updates.barcode] : []) : undefined
         });
+        if (updatedBackend && typeof updatedBackend.id_producto === 'number') {
+          mappedFromBackend = mapBackendProduct(updatedBackend);
+        }
       }
     } catch (e) {
       console.warn('Actualización local:', e);
     }
     setProducts(prev =>
-      prev.map(p => (p.id === id ? { ...p, ...updates, lastUpdated: new Date().toISOString() } : p))
+      prev.map(p => {
+        if (p.id !== id) return p;
+        if (mappedFromBackend) {
+          return {
+            ...mappedFromBackend,
+            distributor:
+              mappedFromBackend.distributor ??
+              ('distributor' in updates ? updates.distributor : undefined),
+            providerId:
+              mappedFromBackend.providerId ??
+              ('providerId' in updates ? updates.providerId : undefined)
+          };
+        }
+        return { ...p, ...updates, lastUpdated: new Date().toISOString() };
+      })
     );
     showToast('Producto actualizado');
   };

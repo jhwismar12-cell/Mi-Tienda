@@ -37,6 +37,8 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types';
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
+import { ProviderSelectorField } from '../modals/ProviderSelectorField';
+import { useStoreProviders } from '../../utils/providers';
 
 type SortOption = 
   | 'name_asc' 
@@ -107,6 +109,9 @@ export const InventoryScreen: React.FC = () => {
 
   // Edit Product / Price & Barcode Modal
   const [editProductModal, setEditProductModal] = useState<Product | null>(null);
+  const [editName, setEditName] = useState<string>('');
+  const [editProviderId, setEditProviderId] = useState<number | undefined>(undefined);
+  const [editDistributor, setEditDistributor] = useState<string | undefined>(undefined);
   const [editBarcode, setEditBarcode] = useState<string>('');
   const [cameraTarget, setCameraTarget] = useState<'search' | 'edit' | null>(null);
   const [editSalePrice, setEditSalePrice] = useState<string>('');
@@ -114,10 +119,27 @@ export const InventoryScreen: React.FC = () => {
   const [editUnit, setEditUnit] = useState<string>('UNIDAD');
   const [editAllowFraction, setEditAllowFraction] = useState<boolean>(false);
   const [editDescription, setEditDescription] = useState<string>('');
+  const { providers: editProviders, addLocalProvider: addLocalEditProvider } = useStoreProviders(
+    Boolean(editProductModal),
+    products
+  );
+
+  useEffect(() => {
+    if (!editProductModal || editProviderId !== undefined || !editDistributor) return;
+    const match = editProviders.find(
+      p => p.razon_social.trim().toLowerCase() === editDistributor.trim().toLowerCase()
+    );
+    if (match) {
+      setEditProviderId(match.id_proveedor);
+    }
+  }, [editProductModal, editProviderId, editDistributor, editProviders]);
 
   const openEditModal = (product: Product, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setEditProductModal(product);
+    setEditName(product.name || '');
+    setEditProviderId(product.providerId);
+    setEditDistributor(product.distributor);
     setEditBarcode(product.barcode || '');
     setEditSalePrice(product.salePrice.toFixed(2));
     setEditCostPrice(product.costPrice.toFixed(2));
@@ -129,6 +151,11 @@ export const InventoryScreen: React.FC = () => {
   const handleSaveProductEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editProductModal) return;
+    const cleanName = editName.trim();
+    if (!cleanName) {
+      showToast('El nombre del producto es obligatorio');
+      return;
+    }
     const sPrice = parseFloat(editSalePrice) || 0;
     const cPrice = parseFloat(editCostPrice) || 0;
     if (sPrice <= 0) {
@@ -139,6 +166,9 @@ export const InventoryScreen: React.FC = () => {
     const cleanBc = editBarcode.trim();
 
     await updateProduct(editProductModal.id, {
+      name: cleanName,
+      providerId: editProviderId,
+      distributor: editDistributor,
       salePrice: sPrice,
       costPrice: cPrice,
       barcode: cleanBc,
@@ -147,7 +177,7 @@ export const InventoryScreen: React.FC = () => {
       description: editDescription.trim() || ''
     });
 
-    showToast(`Producto "${editProductModal.name}" actualizado con éxito`);
+    showToast(`Producto "${cleanName}" actualizado con éxito`);
     setEditProductModal(null);
   };
 
@@ -1285,11 +1315,11 @@ export const InventoryScreen: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Editar Producto (Código de Barras y Precios) */}
+      {/* Modal: Editar Producto (Nombre, Distribuidor, Código de Barras y Precios) */}
       {editProductModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="surface-card bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-sm w-full p-5 space-y-4">
-            <div className="flex justify-between items-center border-b border-[var(--ui-border)] pb-2">
+          <div className="surface-card bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-md w-full max-h-[92vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center border-b border-[var(--ui-border)] px-5 py-3.5 shrink-0">
               <div className="flex items-center gap-1.5">
                 <Edit2 className="w-4 h-4 text-[var(--ui-brand-strong)]" />
                 <h3 className="font-bold text-sm text-[var(--ui-text)]">
@@ -1304,15 +1334,42 @@ export const InventoryScreen: React.FC = () => {
               </button>
             </div>
 
-            <div className="text-xs text-[var(--ui-muted)] bg-[var(--ui-surface-muted)] p-2.5 rounded-xl border border-[var(--ui-border)]">
-              <div className="font-bold text-sm text-[var(--ui-text)]">{editProductModal.name}</div>
-              <div className="font-mono mt-0.5 flex justify-between">
+            <form onSubmit={handleSaveProductEdit} className="p-5 space-y-3 text-xs overflow-y-auto flex-1 min-h-0">
+              <div className="text-xs text-[var(--ui-muted)] bg-[var(--ui-surface-muted)] px-3 py-2 rounded-xl border border-[var(--ui-border)] font-mono flex justify-between gap-2">
                 <span>Cód. Factura: {editProductModal.code}</span>
-                <span className="text-[var(--ui-brand-strong)] font-bold">{editProductModal.distributor}</span>
+                <span className="text-[var(--ui-brand-strong)] font-bold truncate">
+                  {editDistributor || 'Sin distribuidor'}
+                </span>
               </div>
-            </div>
 
-            <form onSubmit={handleSaveProductEdit} className="space-y-3 text-xs">
+              {/* Nombre del Producto */}
+              <div>
+                <label className="block font-bold text-[var(--ui-text)] mb-1">
+                  Nombre del Producto *
+                </label>
+                <input
+                  type="text"
+                  required
+                  aria-label="Nombre del producto"
+                  placeholder="Nombre del producto..."
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-lg font-semibold text-xs sm:text-sm text-[var(--ui-text)] outline-none focus:ring-2 focus:ring-[var(--ui-brand)]/20"
+                />
+              </div>
+
+              {/* Distribuidor */}
+              <ProviderSelectorField
+                providers={editProviders}
+                selectedProviderId={editProviderId}
+                onSelectProvider={(prov) => {
+                  setEditProviderId(prov?.id);
+                  setEditDistributor(prov?.name);
+                }}
+                onProviderCreated={addLocalEditProvider}
+                labelClassName="text-xs font-semibold text-[var(--ui-secondary)]"
+              />
+
               {/* Código de Barras */}
               <div>
                 <label className="block font-bold text-[var(--ui-brand-strong)] mb-1 flex items-center gap-1">

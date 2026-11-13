@@ -271,7 +271,7 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
         if data.id_categoria is not None:
             updates.append("IDCategoria = ?")
             params.append(data.id_categoria)
-        if data.id_proveedor is not None:
+        if "id_proveedor" in data.model_fields_set:
             updates.append("IDProveedor = ?")
             params.append(data.id_proveedor)
         if data.descripcion is not None:

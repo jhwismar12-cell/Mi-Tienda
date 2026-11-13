@@ -840,6 +840,38 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertEqual(created["id_proveedor"], prov["id_proveedor"])
         self.assertEqual(created["proveedor_nombre"], "Distribuidora Escolar Prueba")
 
+        # Update name & switch to another provider, then explicitly clear provider with null
+        prov2_res = self.client.post("/api/proveedores", json={
+            "ruc_ci": "",
+            "razon_social": "Distribuidora Secundaria"
+        })
+        self.assertEqual(prov2_res.status_code, 200)
+        prov2_id = prov2_res.json()["id_proveedor"]
+
+        upd1 = self.client.put(f"/api/productos/{created['id_producto']}", json={
+            "nombre": "Borrador Escolar Grande",
+            "id_proveedor": prov2_id
+        })
+        self.assertEqual(upd1.status_code, 200)
+        self.assertEqual(upd1.json()["nombre"], "Borrador Escolar Grande")
+        self.assertEqual(upd1.json()["id_proveedor"], prov2_id)
+        self.assertEqual(upd1.json()["proveedor_nombre"], "Distribuidora Secundaria")
+
+        # Partial update without id_proveedor preserves existing provider
+        upd2 = self.client.put(f"/api/productos/{created['id_producto']}", json={
+            "precio_venta_actual": 0.35
+        })
+        self.assertEqual(upd2.status_code, 200)
+        self.assertEqual(upd2.json()["id_proveedor"], prov2_id)
+
+        # Explicit null id_proveedor clears distributor
+        upd3 = self.client.put(f"/api/productos/{created['id_producto']}", json={
+            "id_proveedor": None
+        })
+        self.assertEqual(upd3.status_code, 200)
+        self.assertIsNone(upd3.json()["id_proveedor"])
+        self.assertIsNone(upd3.json()["proveedor_nombre"])
+
 if __name__ == "__main__":
     unittest.main()
 
