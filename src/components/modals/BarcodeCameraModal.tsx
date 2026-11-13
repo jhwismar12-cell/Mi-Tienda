@@ -81,8 +81,20 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
   const lastScanRef = useRef<{ code: string; at: number } | null>(null);
   const onDetectedRef = useRef(onDetected);
   const onCloseRef = useRef(onClose);
+  const isOpenRef = useRef(isOpen);
+  const isMountedRef = useRef(true);
+  const openEpochRef = useRef(0);
   onDetectedRef.current = onDetected;
   onCloseRef.current = onClose;
+  isOpenRef.current = isOpen;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      openEpochRef.current += 1;
+    };
+  }, []);
 
   const [continuous, setContinuous] = useState(defaultContinuous);
   const continuousRef = useRef(continuous);
@@ -115,6 +127,7 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
 
   const handleDecodedValue = useCallback(
     (rawCode: string) => {
+      if (!isOpenRef.current || !isMountedRef.current) return;
       const code = rawCode.trim();
       if (!code) return;
 
@@ -153,13 +166,27 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
     [stopCamera]
   );
 
+  const closeModal = useCallback(() => {
+    openEpochRef.current += 1;
+    isOpenRef.current = false;
+    stopCamera();
+    onCloseRef.current();
+  }, [stopCamera]);
+
   useEffect(() => {
+    openEpochRef.current += 1;
     if (isOpen) {
       setContinuous(defaultContinuous);
       setLastScannedCode(null);
       setCameraError(null);
+      setIsDecodingPhoto(false);
       lastScanRef.current = null;
+    } else {
+      setIsDecodingPhoto(false);
     }
+    return () => {
+      openEpochRef.current += 1;
+    };
   }, [isOpen, defaultContinuous]);
 
   useEffect(() => {
@@ -167,13 +194,12 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        stopCamera();
-        onCloseRef.current();
+        closeModal();
       }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [isOpen, stopCamera]);
+  }, [isOpen, closeModal]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -300,7 +326,11 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
   const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || !isOpenRef.current) return;
+
+    const requestEpoch = openEpochRef.current;
+    const isStale = () =>
+      !isMountedRef.current || !isOpenRef.current || openEpochRef.current !== requestEpoch;
 
     setIsDecodingPhoto(true);
     setCameraError(null);
@@ -316,11 +346,13 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
         el.onerror = () => reject(new Error('No se pudo cargar la fotografía'));
         el.src = objectUrl;
       });
+      if (isStale()) return;
 
       const nativeDetector = getNativeBarcodeDetector();
       if (nativeDetector) {
         try {
           const found = await nativeDetector.detect(img);
+          if (isStale()) return;
           decodedText = found.find(f => f.rawValue)?.rawValue || null;
         } catch {
           /* fallback to zxing */
@@ -330,8 +362,11 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
       if (!decodedText) {
         const reader = createBarcodeReader();
         const res = await reader.decodeFromImageElement(img);
+        if (isStale()) return;
         decodedText = res.getText();
       }
+
+      if (isStale()) return;
 
       if (decodedText) {
         handleDecodedValue(decodedText);
@@ -339,10 +374,14 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
         setCameraError('No se detectó ningún código de barras en la foto. Acerca más el código e intenta de nuevo.');
       }
     } catch {
-      setCameraError('No se pudo leer el código de barras en la foto. Asegúrate de que esté enfocado y bien iluminado.');
+      if (!isStale()) {
+        setCameraError('No se pudo leer el código de barras en la foto. Asegúrate de que esté enfocado y bien iluminado.');
+      }
     } finally {
       URL.revokeObjectURL(objectUrl);
-      setIsDecodingPhoto(false);
+      if (isMountedRef.current && openEpochRef.current === requestEpoch) {
+        setIsDecodingPhoto(false);
+      }
     }
   };
 
@@ -351,10 +390,7 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-150"
-      onClick={() => {
-        stopCamera();
-        onClose();
-      }}
+      onClick={closeModal}
     >
       <div
         className="bg-[var(--ui-surface)] rounded-none sm:rounded-2xl border-0 sm:border border-[var(--ui-border)] shadow-2xl w-full max-w-lg h-[100dvh] sm:h-auto sm:max-h-[92vh] overflow-hidden flex flex-col"
@@ -374,10 +410,7 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              stopCamera();
-              onClose();
-            }}
+            onClick={closeModal}
             aria-label="Cerrar escáner de cámara"
             className="p-2 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition-colors shrink-0 cursor-pointer"
           >
@@ -508,10 +541,7 @@ export const BarcodeCameraModal: React.FC<BarcodeCameraModalProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              stopCamera();
-              onClose();
-            }}
+            onClick={closeModal}
             className="px-4 py-2.5 min-h-[42px] rounded-xl bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer ml-auto"
           >
             <Camera className="w-4 h-4 text-[var(--ui-mint)]" />

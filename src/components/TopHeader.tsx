@@ -64,25 +64,25 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
   }, []);
 
   return (
-    <header className="app-header relative z-40 bg-[var(--ui-chrome)] border-b border-white/10 flex justify-between items-center gap-2 sm:gap-3 w-full px-3 sm:px-4 lg:px-6 min-h-14 lg:h-16 py-2 lg:py-0 shrink-0 select-none text-[var(--ui-chrome-text)]">
+    <header className="app-header relative z-40 bg-[var(--ui-chrome)] border-b border-white/10 flex justify-between items-center gap-1.5 sm:gap-3 w-full px-2.5 sm:px-4 lg:px-6 min-h-14 lg:h-16 py-2 lg:py-0 shrink-0 select-none text-[var(--ui-chrome-text)]">
       {/* Brand, Mobile Menu Button & Scanner Status */}
-      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-4 shrink-0 min-w-0">
         {onToggleMobileMenu && (
           <button
             type="button"
             onClick={onToggleMobileMenu}
             aria-label="Abrir menú"
-            className="lg:hidden p-2 -ml-1 rounded-lg hover:bg-white/10 text-white transition-colors cursor-pointer"
+            className="lg:hidden p-1.5 sm:p-2 -ml-0.5 rounded-lg hover:bg-white/10 text-white transition-colors cursor-pointer shrink-0"
           >
             <Menu className="w-5 h-5" />
           </button>
         )}
 
-        <div className="flex items-center gap-2">
-          <div className="brand-mark w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[var(--ui-brand)] flex items-center justify-center text-white ring-1 ring-white/10 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <div className="brand-mark w-7 h-7 sm:w-9 sm:h-9 rounded-xl bg-[var(--ui-brand)] flex items-center justify-center text-white ring-1 ring-white/10 shrink-0">
             <Store className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.8} />
           </div>
-          <span className="font-sans text-sm sm:text-base xl:text-lg font-semibold text-white tracking-tight whitespace-nowrap">
+          <span className="font-sans text-xs sm:text-base xl:text-lg font-semibold text-white tracking-tight whitespace-nowrap truncate">
             <span className="sm:hidden">Mi Tienda</span>
             <span className="hidden sm:inline">Mi Tienda Familiar</span>
           </span>
@@ -96,10 +96,11 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
       </div>
 
       {/* Global Quick Search */}
-      <div className="flex flex-1 min-w-10 max-w-[44px] sm:max-w-xs justify-end sm:justify-start">
-      <button
+      <div className="flex items-center sm:flex-1 sm:min-w-0 sm:max-w-xs justify-end sm:justify-start shrink-0 sm:shrink">
+        <button
+          type="button"
           onClick={() => setIsGlobalSearchOpen(true)}
-          className="w-full h-9 flex items-center justify-center sm:justify-between gap-2 sm:gap-3 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white px-2.5 sm:px-3 rounded-lg text-xs border border-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 cursor-pointer"
+          className="w-8 h-8 sm:w-full sm:min-w-0 sm:h-9 overflow-hidden flex items-center justify-center sm:justify-between gap-2 sm:gap-3 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white px-0 sm:px-3 rounded-lg text-xs border border-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 cursor-pointer"
           title="Buscar productos, precios o códigos (⌘K)"
           aria-label="Buscar productos, precios o códigos (⌘K)"
         >
@@ -114,8 +115,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
       </div>
 
       {/* Right Controls & Cashier Info */}
-      <div className="flex items-center gap-1.5 sm:gap-2 xl:gap-3 shrink-0 text-slate-300">
-        <div className="flex items-center gap-1.5 sm:gap-2 text-sm">
+      <div className="flex items-center gap-1 sm:gap-2 xl:gap-3 shrink-0 text-slate-300">
+        <div className="flex items-center gap-1 sm:gap-2 text-sm">
           <div className="hidden 2xl:flex items-center gap-1.5 px-2 py-1 rounded-md border border-white/10 text-[11px] font-medium text-slate-300" title={`Sesión iniciada como ${currentUser?.username || 'admin'} (${currentUser?.role_name || 'ADMINISTRADOR'})`}>
             <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
             <span>{currentUser?.role_name === 'ADMINISTRADOR' ? 'Admin' : (currentUser?.role_name || 'Cajero')}</span>
@@ -125,7 +126,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
           <div className="relative" ref={workerDropdownRef}>
             <button
               onClick={() => setIsWorkerDropdownOpen(v => !v)}
-              className="flex items-center gap-1.5 sm:gap-2 h-9 sm:h-10 px-2 sm:px-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-100 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+              className="flex items-center gap-1 sm:gap-2 h-8 sm:h-10 px-1.5 sm:px-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-100 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
               title="Clic para cambiar quién está a cargo del turno"
               aria-expanded={isWorkerDropdownOpen}
               aria-haspopup="true"
@@ -139,7 +140,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
                   {activeWorkerName || cashShift.cashierName || 'Wismar'}
                 </span>
               </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isWorkerDropdownOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 transition-transform ${isWorkerDropdownOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {isWorkerDropdownOpen && (
@@ -201,33 +202,33 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
           {cashShift.isOpen ? (
             <button
               onClick={() => closeShiftAndGenerateReport()}
-              className="inline-flex items-center gap-1 sm:gap-1.5 h-9 text-teal-100 hover:text-white font-semibold bg-teal-400/10 hover:bg-teal-400/20 px-2 sm:px-2.5 rounded-lg text-[11px] border border-teal-300/25 transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+              className="inline-flex items-center gap-1 sm:gap-1.5 h-8 sm:h-9 text-teal-100 hover:text-white font-semibold bg-teal-400/10 hover:bg-teal-400/20 px-2 sm:px-2.5 rounded-lg text-[11px] border border-teal-300/25 transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
               title="Caja Abierta • Clic o [F12] para Arqueo / Cierre de Caja"
             >
-              <Unlock className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline">ABIERTA</span>
+              <Unlock className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden min-[420px]:inline">ABIERTA</span>
               <span className="hidden lg:inline font-mono text-teal-200/70">[F12]</span>
             </button>
           ) : (
             <button
               onClick={() => setIsOpenShiftModalOpen(true)}
-              className="inline-flex items-center gap-1 sm:gap-1.5 h-9 text-amber-100 hover:text-white font-semibold bg-amber-400/10 hover:bg-amber-400/20 px-2 sm:px-2.5 rounded-lg text-[11px] border border-amber-300/25 transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+              className="inline-flex items-center gap-1 sm:gap-1.5 h-8 sm:h-9 text-amber-100 hover:text-white font-semibold bg-amber-400/10 hover:bg-amber-400/20 px-2 sm:px-2.5 rounded-lg text-[11px] border border-amber-300/25 transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
               title="Caja Cerrada • Clic para Apertura de Caja"
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>CERRADA</span>
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden min-[420px]:inline">CERRADA</span>
             </button>
           )}
         </div>
 
         {/* Quick Actions */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             onClick={() => {
               toggleDarkMode();
               showToast(!darkMode ? '🌙 Modo Oscuro activado' : '☀️ Modo Claro activado');
             }}
-            className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+            className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
             title={darkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
             aria-label={darkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
           >
@@ -236,7 +237,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
 
           <button
             onClick={() => setIsCashMovementModalOpen(true)}
-            className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+            className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
             title="Registrar Retiro o Ingreso de Efectivo"
             aria-label="Registrar Retiro o Ingreso de Efectivo"
           >
@@ -245,7 +246,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onToggleMobileMenu }) => {
 
           <button
             onClick={() => logoutUser()}
-            className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+            className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
             title="Cerrar sesión"
             aria-label="Cerrar sesión"
           >

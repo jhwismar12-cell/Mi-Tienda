@@ -388,6 +388,32 @@ test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 even at stoc
   assert.equal(store.cart[0].product.name, 'Huevo Blanco');
   assert.equal(store.cart[0].quantity, 6);
   assert.equal(store.cart[0].subtotal, 1.00);
+
+  // Mobile two-step flow: clicking product card opens detail view and survives parent re-renders
+  const searchInput = renderer.root.findByProps({
+    placeholder: 'Buscar arroz, tomate, huevo, maduro, lenteja, limón...'
+  });
+  await act(async () => {
+    searchInput.props.onChange({ target: { value: 'arroz' } });
+  });
+  const arrozCard = renderer.root.findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && textOf(n).includes('Arroz Conejo'))[0];
+  await act(async () => {
+    arrozCard.props.onClick();
+  });
+  const backBtn = renderer.root.findAllByType('button').find(btn => textOf(btn).includes('Volver a la lista de productos'));
+  assert.ok(backBtn, 'Expected mobile back-to-list button in BulkSaleModal detail step');
+  assert.ok(String(backBtn.parent?.parent?.props?.className || '').includes('flex-1'));
+
+  // Parent re-render with a fresh inline onClose must NOT reset mobile detail step or search
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+  const searchAfter = renderer.root.findByProps({
+    placeholder: 'Buscar arroz, tomate, huevo, maduro, lenteja, limón...'
+  });
+  assert.equal(searchAfter.props.value, 'arroz');
+  const backBtnAfter = renderer.root.findAllByType('button').find(btn => textOf(btn).includes('Volver a la lista de productos'));
+  assert.ok(String(backBtnAfter?.parent?.parent?.props?.className || '').includes('flex-1'));
 });
 
 test('SupplierSearchModal filters by supplier and adds zero-stock items without closing', async (t) => {
@@ -671,4 +697,88 @@ test('camera barcode scanner configures reader and works across POS, Inventory, 
     recCamModal.props.onDetected('BARCODE');
   });
   assert.match(recCamModal.props.lastFeedback ?? '', /Producto/);
+});
+
+test('BarcodeCameraModal discards late photo decodes after close and TopHeader search shrinks on tablet', async () => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+  const prevCreateUrl = URL.createObjectURL;
+  const prevRevokeUrl = URL.revokeObjectURL;
+  const prevImage = (globalThis as any).Image;
+  const prevDetector = (globalThis as any).window.BarcodeDetector;
+
+  let resolveDetect!: (res: Array<{ rawValue?: string }>) => void;
+  const detectPromise = new Promise<Array<{ rawValue?: string }>>(res => { resolveDetect = res; });
+
+  URL.createObjectURL = () => 'blob:mock-barcode';
+  URL.revokeObjectURL = () => {};
+  (globalThis as any).Image = class MockImage {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(_v: string) {
+      queueMicrotask(() => this.onload?.());
+    }
+  };
+  (globalThis as any).window.BarcodeDetector = class MockDetector {
+    detect() {
+      return detectPromise;
+    }
+  };
+
+  let detectedCount = 0;
+  try {
+    await act(async () => {
+      renderer.update(
+        <StoreProvider>
+          <Probe />
+          <TopHeader onToggleMobileMenu={() => {}} />
+          <BarcodeCameraModal
+            isOpen={true}
+            onClose={() => {}}
+            onDetected={() => { detectedCount += 1; }}
+          />
+        </StoreProvider>
+      );
+    });
+
+    // Verify TopHeader quick search container permits tablet shrinking (`sm:min-w-0`)
+    const searchBtn = renderer.root.findByProps({ 'aria-label': 'Buscar productos, precios o códigos (⌘K)' });
+    assert.ok(String(searchBtn.parent?.props?.className || '').includes('sm:min-w-0'));
+    assert.ok(String(searchBtn.props.className || '').includes('sm:min-w-0'));
+
+    // Start async photo decode, then close modal BEFORE detect() resolves
+    const fileInput = renderer.root.findByProps({ capture: 'environment' });
+    let pendingPhoto!: Promise<void>;
+    await act(async () => {
+      pendingPhoto = fileInput.props.onChange({
+        target: { files: [{ name: 'barcode.jpg' }], value: 'x' }
+      });
+    });
+
+    await act(async () => {
+      renderer.update(
+        <StoreProvider>
+          <Probe />
+          <TopHeader onToggleMobileMenu={() => {}} />
+          <BarcodeCameraModal
+            isOpen={false}
+            onClose={() => {}}
+            onDetected={() => { detectedCount += 1; }}
+          />
+        </StoreProvider>
+      );
+    });
+
+    await act(async () => {
+      resolveDetect([{ rawValue: '7861001234567' }]);
+      await pendingPhoto;
+    });
+
+    assert.equal(detectedCount, 0);
+  } finally {
+    URL.createObjectURL = prevCreateUrl;
+    URL.revokeObjectURL = prevRevokeUrl;
+    (globalThis as any).Image = prevImage;
+    (globalThis as any).window.BarcodeDetector = prevDetector;
+  }
 });

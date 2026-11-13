@@ -8,7 +8,8 @@ import {
   Tag,
   Plus,
   AlertTriangle,
-  ArrowRight
+  ArrowRight,
+  ArrowLeft
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
@@ -48,9 +49,12 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   const [tab, setTab] = useState<'bulk' | 'all_unbarcoded'>('bulk');
   const [search, setSearch] = useState('');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [mobileStep, setMobileStep] = useState<'list' | 'detail'>('list');
   const [weightInput, setWeightInput] = useState<string>('1');
   const [dollarInput, setDollarInput] = useState<string>('1.00');
   const searchRef = useRef<HTMLInputElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const unbarcodedProducts = useMemo(() => {
     return products.filter(p => !p.barcode || p.barcode.trim() === '');
@@ -102,18 +106,19 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   useEffect(() => {
     if (!isOpen) return;
     setSearch('');
+    setMobileStep('list');
     const t = canAutoFocusInput()
       ? setTimeout(() => searchRef.current?.focus(), 40)
       : undefined;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       if (t !== undefined) clearTimeout(t);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -229,11 +234,15 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
         </div>
 
         {/* Search & Tabs */}
-        <div className="p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-col sm:flex-row gap-3 items-stretch sm:items-center shrink-0">
+        <div
+          className={`p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center shrink-0 ${
+            mobileStep === 'detail' ? 'hidden lg:flex' : 'flex'
+          }`}
+        >
           <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0">
             <button
               onClick={() => setTab('bulk')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate ${
                 tab === 'bulk'
                   ? 'bg-[var(--ui-brand)] text-white shadow-xs'
                   : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
@@ -243,7 +252,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
             </button>
             <button
               onClick={() => setTab('all_unbarcoded')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate ${
                 tab === 'all_unbarcoded'
                   ? 'bg-[var(--ui-brand)] text-white shadow-xs'
                   : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
@@ -275,9 +284,13 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
         </div>
 
         {/* Content Split */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto lg:overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-12 overflow-hidden">
           {/* Left Product List */}
-          <div className="lg:col-span-7 max-h-[40dvh] lg:max-h-none overflow-y-auto p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-[var(--ui-border)]">
+          <div
+            className={`${
+              mobileStep === 'list' ? 'flex-1' : 'hidden lg:block'
+            } lg:col-span-7 overflow-y-auto p-3 sm:p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:border-r border-[var(--ui-border)]`}
+          >
             {filteredList.length === 0 ? (
               <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center text-[var(--ui-muted)] p-6">
                 <PackageOpen className="w-10 h-10 mb-2 opacity-40" />
@@ -295,7 +308,10 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                   return (
                     <div
                       key={prod.id}
-                      onClick={() => setSelectedProductId(prod.id)}
+                      onClick={() => {
+                        setSelectedProductId(prod.id);
+                        setMobileStep('detail');
+                      }}
                       className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2 ${
                         isSelected
                           ? 'border-[var(--ui-brand)] bg-[var(--ui-brand-soft)] shadow-xs ring-1 ring-[var(--ui-brand)]/30'
@@ -355,9 +371,26 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
           </div>
 
           {/* Right Action Panel */}
-          <div className="lg:col-span-5 lg:overflow-y-auto p-3.5 sm:p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-[var(--ui-surface-muted)]/40 flex flex-col gap-3.5 sm:gap-4">
+          <div
+            className={`${
+              mobileStep === 'detail' ? 'flex-1' : 'hidden lg:flex'
+            } lg:col-span-5 overflow-y-auto p-3.5 sm:p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-[var(--ui-surface-muted)]/40 flex flex-col gap-3`}
+          >
             {selectedProduct ? (
               <>
+                <button
+                  type="button"
+                  onClick={() => setMobileStep('list')}
+                  className="lg:hidden w-full py-2.5 px-3 rounded-xl bg-[var(--ui-surface)] border border-[var(--ui-border-strong)] text-xs font-bold text-[var(--ui-text)] flex items-center justify-between gap-2 shadow-xs cursor-pointer shrink-0"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <ArrowLeft className="w-4 h-4 text-[var(--ui-brand-strong)]" />
+                    <span>Volver a la lista de productos</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-[var(--ui-muted)]">
+                    {filteredList.length} disp.
+                  </span>
+                </button>
                 <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -467,13 +500,13 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                           handleAddWeight();
                         }
                       }}
-                      className="flex-1 px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl font-mono font-bold text-sm text-[var(--ui-text)] outline-none"
+                      className="flex-1 min-w-0 px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl font-mono font-bold text-sm text-[var(--ui-text)] outline-none"
                     />
                     <button
                       type="button"
                       disabled={weightNum <= 0}
                       onClick={() => handleAddWeight()}
-                      className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
+                      className="primary-action shrink-0 whitespace-nowrap px-4 py-2 rounded-xl bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Agregar</span>
@@ -513,7 +546,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                   </div>
 
                   <div className="flex gap-2 pt-1">
-                    <div className="relative flex-1">
+                    <div className="relative flex-1 min-w-0">
                       <span className="absolute left-3 top-2 font-mono font-bold text-sm text-[var(--ui-muted)]">$</span>
                       <input
                         type="number"
@@ -534,7 +567,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                       type="button"
                       disabled={!dollarPreview}
                       onClick={() => handleAddByDollar()}
-                      className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-chrome)] hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
+                      className="primary-action shrink-0 whitespace-nowrap px-4 py-2 rounded-xl bg-[var(--ui-chrome)] hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
                     >
                       <DollarSign className="w-3.5 h-3.5" />
                       <span>Vender ${dollarNum > 0 ? dollarNum.toFixed(2) : '0.00'}</span>
