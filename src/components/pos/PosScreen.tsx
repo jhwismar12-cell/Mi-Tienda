@@ -17,7 +17,8 @@ import {
   AlertTriangle,
   PackageX,
   Truck,
-  Scale
+  Scale,
+  ArrowDown
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
@@ -27,6 +28,7 @@ import {
   buildSupplierGroups,
   ALL_SUPPLIERS_KEY
 } from './SupplierSearchModal';
+import { canAutoFocusInput } from '../../utils/responsive';
 
 export const PosScreen: React.FC = () => {
   const {
@@ -59,6 +61,7 @@ export const PosScreen: React.FC = () => {
   const [initialSupplierFilter, setInitialSupplierFilter] = useState<string | null>(null);
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const paymentSectionRef = useRef<HTMLDivElement>(null);
 
   const supplierGroups = useMemo(() => buildSupplierGroups(products), [products]);
 
@@ -108,9 +111,11 @@ export const PosScreen: React.FC = () => {
   const cashReceivedNumber = parseFloat(cashReceived) || 0;
   const change = paymentMethod === 'cash' ? Math.max(0, Number((cashReceivedNumber - subtotal).toFixed(2))) : 0;
 
-  // Auto-focus barcode input
+  // Auto-focus barcode input only on desktop pointers (avoid popping virtual keyboard on tablet/phone)
   useEffect(() => {
-    barcodeInputRef.current?.focus();
+    if (canAutoFocusInput()) {
+      barcodeInputRef.current?.focus();
+    }
   }, []);
 
   // Keyboard shortcut handler (F1-F5, F12)
@@ -263,12 +268,12 @@ export const PosScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsGlobalSearchOpen(true)}
-                className="p-1 hover:bg-[var(--ui-surface-hover)] rounded text-[var(--ui-muted)] transition-colors"
+                className="p-1.5 hover:bg-[var(--ui-surface-hover)] rounded text-[var(--ui-muted)] transition-colors cursor-pointer"
                 title="Buscar en catálogo (⌘K)"
               >
                 <Search className="w-4 h-4" />
               </button>
-              <span className="font-mono text-xs bg-[var(--ui-chrome-raised)] text-white px-2 py-1 rounded font-bold">
+              <span className="hidden lg:inline font-mono text-xs bg-[var(--ui-chrome-raised)] text-white px-2 py-1 rounded font-bold">
                 [F3]
               </span>
             </div>
@@ -328,31 +333,33 @@ export const PosScreen: React.FC = () => {
             )}
           </form>
 
-          <button
-            type="button"
-            onClick={() => openSupplierModal(ALL_SUPPLIERS_KEY)}
-            className="px-3.5 py-3 bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
-            title="Buscar y vender productos agrupados por proveedor (F7)"
-          >
-            <Truck className="w-4 h-4 text-[var(--ui-mint)]" />
-            <span>Por Proveedor</span>
-            <span className="font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded font-bold">
-              [F7]
-            </span>
-          </button>
+          <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openSupplierModal(ALL_SUPPLIERS_KEY)}
+              className="px-3 sm:px-3.5 py-3 min-h-[44px] bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+              title="Buscar y vender productos agrupados por proveedor (F7)"
+            >
+              <Truck className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
+              <span className="truncate">Por Proveedor</span>
+              <span className="hidden lg:inline font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded font-bold">
+                [F7]
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setIsBulkModalOpen(true)}
-            className="px-3.5 py-3 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
-            title="Vender por peso, valor en dólares o productos sin código (F6)"
-          >
-            <Scale className="w-4 h-4 text-[var(--ui-mint)]" />
-            <span>Granel / Sin Código</span>
-            <span className="font-mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded font-bold">
-              [F6]
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setIsBulkModalOpen(true)}
+              className="px-3 sm:px-3.5 py-3 min-h-[44px] bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+              title="Vender por peso, valor en dólares o productos sin código (F6)"
+            >
+              <Scale className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
+              <span className="truncate">Granel / Sin Cód.</span>
+              <span className="hidden lg:inline font-mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded font-bold">
+                [F6]
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Quick Supplier Filter Strip */}
@@ -391,15 +398,15 @@ export const PosScreen: React.FC = () => {
               <button
                 key={prod.id}
                 onClick={() => addProductToCart(prod, 1)}
-                className={`pos-shortcut bg-[var(--ui-surface)] border py-2.5 px-3 rounded-lg relative hover:border-[var(--ui-border-strong)] active:scale-[0.98] transition-all shadow-sm flex flex-col items-center justify-center text-center group overflow-hidden ${
+                className={`pos-shortcut bg-[var(--ui-surface)] border py-2.5 px-3 rounded-lg relative hover:border-[var(--ui-border-strong)] active:scale-[0.98] transition-all shadow-sm flex flex-col items-center justify-center text-center group overflow-hidden cursor-pointer ${
                   isOutOfStock ? 'border-dashed border-[var(--ui-danger-border)] bg-[var(--ui-danger-bg)]/30' : 'border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)]'
                 }`}
               >
-                <span className="font-mono text-[10px] absolute top-1.5 right-1.5 bg-[var(--ui-chrome-raised)] text-white px-1.5 py-0.5 rounded font-bold">
+                <span className="hidden lg:inline font-mono text-[10px] absolute top-1.5 right-1.5 bg-[var(--ui-chrome-raised)] text-white px-1.5 py-0.5 rounded font-bold">
                   {hotkey}
                 </span>
                 {isOutOfStock && (
-                  <span className="font-sans text-[9px] absolute top-1.5 left-1.5 bg-[var(--ui-danger-solid)] text-white px-1.5 py-0.2 rounded-full font-bold">
+                  <span className="font-sans text-[9px] bg-[var(--ui-danger-solid)] text-white px-1.5 py-0.2 rounded-full font-bold mb-1 sm:mb-0 sm:absolute sm:top-1.5 sm:left-1.5">
                     Agotado (0)
                   </span>
                 )}
@@ -419,10 +426,44 @@ export const PosScreen: React.FC = () => {
           })}
         </div>
 
+        {/* Mobile/Tablet Quick Jump to Checkout Bar */}
+        {cart.length > 0 && (
+          <div className="lg:hidden mb-3 px-3.5 py-2.5 rounded-xl bg-[var(--ui-chrome)] text-white flex items-center justify-between gap-2 shadow-sm">
+            <div className="text-xs">
+              <span className="opacity-80">{totalArticles} {totalArticles === 1 ? 'ítem' : 'ítems'} · Total </span>
+              <strong className="font-mono text-sm text-[var(--ui-mint)]">${subtotal.toFixed(2)}</strong>
+            </div>
+            <button
+              type="button"
+              onClick={() => paymentSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className="px-3 py-1.5 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <span>Ir a Cobrar</span>
+              <ArrowDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Cart Table Container */}
         <div className="pos-cart flex-1 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg overflow-hidden flex flex-col shadow-sm">
-          {/* Table Header */}
-          <div className="pos-cart-header bg-[var(--ui-surface-hover)] border-b border-[var(--ui-border)] px-4 py-2.5 grid grid-cols-12 text-xs font-mono font-bold text-[var(--ui-muted)] uppercase tracking-wider shrink-0">
+          {/* Mobile Cart Header */}
+          <div className="sm:hidden bg-[var(--ui-surface-hover)] border-b border-[var(--ui-border)] px-3.5 py-2.5 flex items-center justify-between text-xs font-bold text-[var(--ui-muted)] uppercase tracking-wider shrink-0">
+            <span>Carrito ({totalArticles})</span>
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={clearCart}
+                className="text-[var(--ui-danger-text)] text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                aria-label="Vaciar carrito móvil"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Vaciar</span>
+              </button>
+            )}
+          </div>
+
+          {/* Tablet/Desktop Table Header */}
+          <div className="pos-cart-header hidden sm:grid bg-[var(--ui-surface-hover)] border-b border-[var(--ui-border)] px-4 py-2.5 grid-cols-12 text-xs font-mono font-bold text-[var(--ui-muted)] uppercase tracking-wider shrink-0">
             <div className="col-span-1">#</div>
             <div className="col-span-2">Código</div>
             <div className="col-span-4">Descripción</div>
@@ -446,13 +487,13 @@ export const PosScreen: React.FC = () => {
           {/* Table Scrollable Body */}
           <div className="pos-cart-body flex-1 overflow-y-auto divide-y divide-[var(--ui-border)]">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ui-subtle)]">
+              <div className="h-full min-h-[170px] flex flex-col items-center justify-center p-6 sm:p-8 text-center text-[var(--ui-subtle)]">
                 <div className="pos-empty-icon">
                   <ShoppingBag className="w-8 h-8 text-[var(--ui-subtle)]" />
                 </div>
                 <p className="font-semibold text-sm text-[var(--ui-muted)]">Carrito vacío</p>
                 <p className="text-xs text-[var(--ui-subtle)] max-w-xs mt-1">
-                  Escanee un código de barras o use los botones de acceso rápido [F1 - F4] para comenzar a vender.
+                  Busca por producto o proveedor arriba para comenzar a vender.
                 </p>
               </div>
             ) : (
@@ -463,100 +504,184 @@ export const PosScreen: React.FC = () => {
                 const unitShort = formatUnitShort(item.product.unit);
 
                 return (
-                  <div
-                    key={`${item.product.id}-${item.unitPrice}-${item.promoLabel || 'base'}`}
-                    onClick={() => setSelectedCartIndex(idx)}
-                    className={`pos-cart-row grid grid-cols-12 items-center px-4 py-2.5 transition-colors cursor-pointer text-sm ${
-                      isSelected
-                        ? 'bg-[var(--ui-brand)]/10 ring-1 ring-inset ring-[var(--ui-brand)] shadow-sm'
-                        : idx % 2 === 0
-                        ? 'bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-muted)]'
-                        : 'bg-[var(--ui-surface-muted)] hover:bg-[var(--ui-surface-hover)]'
-                    }`}
-                  >
-                    {/* # Index */}
-                    <div className="col-span-1 font-mono text-xs text-[var(--ui-muted)]">
-                      {idx + 1}
-                    </div>
+                  <React.Fragment key={`${item.product.id}-${item.unitPrice}-${item.promoLabel || 'base'}`}>
+                    {/* Phone Card Layout (< 640px) */}
+                    <div
+                      onClick={() => setSelectedCartIndex(idx)}
+                      className={`sm:hidden p-3 space-y-2.5 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-[var(--ui-brand)]/10' : 'bg-[var(--ui-surface)]'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-sm text-[var(--ui-text)] leading-snug">
+                            {item.product.name}
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[11px] text-[var(--ui-muted)]">
+                            <span className="font-mono">{item.product.barcode || item.product.code}</span>
+                            <span>·</span>
+                            <span className="font-mono uppercase">{unitShort}</span>
+                            {item.promoLabel && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                                {item.promoLabel}
+                              </span>
+                            )}
+                            {item.product.distributor && (
+                              <span className="truncate max-w-[140px]">· {item.product.distributor}</span>
+                            )}
+                          </div>
+                        </div>
 
-                    {/* Code */}
-                    <div className="col-span-2 font-mono text-xs text-[var(--ui-text)] truncate">
-                      {item.product.barcode || item.product.code}
-                    </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromCart(idx);
+                          }}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--ui-subtle)] hover:text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] shrink-0 cursor-pointer"
+                          title="Eliminar línea"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
 
-                    {/* Description */}
-                    <div className="col-span-4 font-medium text-[var(--ui-text)] truncate pr-2">
-                      <span>{item.product.name}</span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-mono text-[var(--ui-muted)] uppercase">
-                          {unitShort}
-                        </span>
-                        {item.promoLabel && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
-                            {item.promoLabel}
-                          </span>
-                        )}
-                        {item.product.distributor && (
-                          <span className="text-[10px] text-[var(--ui-muted)] font-normal truncate">
-                            · {item.product.distributor}
-                          </span>
-                        )}
+                      <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => updateCartQuantity(idx, Number((item.quantity - qtyStep).toFixed(3)))}
+                            className="w-9 h-9 rounded-lg bg-[var(--ui-surface-hover)] text-[var(--ui-text)] border border-[var(--ui-border)] flex items-center justify-center active:scale-95 font-bold cursor-pointer"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <input
+                            type="number"
+                            step={isFraction ? '0.01' : '1'}
+                            min={isFraction ? '0.01' : '1'}
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value.replace(',', '.'));
+                              if (Number.isFinite(val) && val > 0) {
+                                updateCartQuantity(idx, val);
+                              }
+                            }}
+                            className="w-14 h-9 text-center font-mono font-bold bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg text-sm outline-none focus:border-[var(--ui-brand)]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => updateCartQuantity(idx, Number((item.quantity + qtyStep).toFixed(3)))}
+                            className="w-9 h-9 rounded-lg bg-[var(--ui-surface-hover)] text-[var(--ui-text)] border border-[var(--ui-border)] flex items-center justify-center active:scale-95 font-bold cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-[11px] font-mono text-[var(--ui-muted)]">
+                            ${item.unitPrice.toFixed(2)} c/u
+                          </div>
+                          <div className="font-mono font-black text-base text-[var(--ui-text)]">
+                            ${item.subtotal.toFixed(2)}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Quantity Controls */}
-                    <div className="col-span-2 flex items-center justify-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => updateCartQuantity(idx, Number((item.quantity - qtyStep).toFixed(3)))}
-                        className="w-6 h-6 rounded bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <input
-                        type="number"
-                        step={isFraction ? '0.01' : '1'}
-                        min={isFraction ? '0.01' : '1'}
-                        value={item.quantity}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value.replace(',', '.'));
-                          if (Number.isFinite(val) && val > 0) {
-                            updateCartQuantity(idx, val);
-                          }
-                        }}
-                        className="w-12 text-center font-mono font-bold bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded py-0.5 text-xs outline-none focus:border-[var(--ui-brand)]"
-                      />
-                      <button
-                        onClick={() => updateCartQuantity(idx, Number((item.quantity + qtyStep).toFixed(3)))}
-                        className="w-6 h-6 rounded bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    {/* Tablet & Desktop Table Row (>= 640px) */}
+                    <div
+                      onClick={() => setSelectedCartIndex(idx)}
+                      className={`pos-cart-row hidden sm:grid grid-cols-12 items-center px-4 py-2.5 transition-colors cursor-pointer text-sm ${
+                        isSelected
+                          ? 'bg-[var(--ui-brand)]/10 ring-1 ring-inset ring-[var(--ui-brand)] shadow-sm'
+                          : idx % 2 === 0
+                          ? 'bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-muted)]'
+                          : 'bg-[var(--ui-surface-muted)] hover:bg-[var(--ui-surface-hover)]'
+                      }`}
+                    >
+                      {/* # Index */}
+                      <div className="col-span-1 font-mono text-xs text-[var(--ui-muted)]">
+                        {idx + 1}
+                      </div>
 
-                    {/* Unit Price */}
-                    <div className="col-span-1 text-right font-mono text-xs text-[var(--ui-muted)]">
-                      ${item.unitPrice.toFixed(2)}
-                    </div>
+                      {/* Code */}
+                      <div className="col-span-2 font-mono text-xs text-[var(--ui-text)] truncate">
+                        {item.product.barcode || item.product.code}
+                      </div>
 
-                    {/* Subtotal */}
-                    <div className="col-span-1 text-right font-mono font-bold text-xs text-[var(--ui-text)]">
-                      ${item.subtotal.toFixed(2)}
-                    </div>
+                      {/* Description */}
+                      <div className="col-span-4 font-medium text-[var(--ui-text)] truncate pr-2">
+                        <span>{item.product.name}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-mono text-[var(--ui-muted)] uppercase">
+                            {unitShort}
+                          </span>
+                          {item.promoLabel && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                              {item.promoLabel}
+                            </span>
+                          )}
+                          {item.product.distributor && (
+                            <span className="text-[10px] text-[var(--ui-muted)] font-normal truncate">
+                              · {item.product.distributor}
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
-                    {/* Delete Item */}
-                    <div className="col-span-1 text-center">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeFromCart(idx);
-                        }}
-                        className="p-1 text-[var(--ui-subtle)] hover:text-[var(--ui-danger-text)] rounded hover:bg-[var(--ui-danger-bg)] transition-colors"
-                        title="Eliminar línea"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Quantity Controls */}
+                      <div className="col-span-2 flex items-center justify-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => updateCartQuantity(idx, Number((item.quantity - qtyStep).toFixed(3)))}
+                          className="w-7 h-7 rounded bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold cursor-pointer"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <input
+                          type="number"
+                          step={isFraction ? '0.01' : '1'}
+                          min={isFraction ? '0.01' : '1'}
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value.replace(',', '.'));
+                            if (Number.isFinite(val) && val > 0) {
+                              updateCartQuantity(idx, val);
+                            }
+                          }}
+                          className="w-12 text-center font-mono font-bold bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded py-0.5 text-xs outline-none focus:border-[var(--ui-brand)]"
+                        />
+                        <button
+                          onClick={() => updateCartQuantity(idx, Number((item.quantity + qtyStep).toFixed(3)))}
+                          className="w-7 h-7 rounded bg-[var(--ui-surface-hover)] text-[var(--ui-text)] flex items-center justify-center active:scale-90 transition-all font-bold cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Unit Price */}
+                      <div className="col-span-1 text-right font-mono text-xs text-[var(--ui-muted)]">
+                        ${item.unitPrice.toFixed(2)}
+                      </div>
+
+                      {/* Subtotal */}
+                      <div className="col-span-1 text-right font-mono font-bold text-xs text-[var(--ui-text)]">
+                        ${item.subtotal.toFixed(2)}
+                      </div>
+
+                      {/* Delete Item */}
+                      <div className="col-span-1 text-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromCart(idx);
+                          }}
+                          className="p-1.5 text-[var(--ui-subtle)] hover:text-[var(--ui-danger-text)] rounded hover:bg-[var(--ui-danger-bg)] transition-colors cursor-pointer"
+                          title="Eliminar línea"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </React.Fragment>
                 );
               })
             )}
@@ -567,7 +692,7 @@ export const PosScreen: React.FC = () => {
             <div>
               Artículos: <strong className="text-[var(--ui-text)]">{totalArticles}</strong> | Unidades: <strong className="text-[var(--ui-text)]">{totalUnits}</strong>
             </div>
-            <div className="pos-shortcuts-hint flex flex-wrap gap-3 text-xs">
+            <div className="pos-shortcuts-hint hidden lg:flex flex-wrap gap-3 text-xs">
               <span>[F1-F4] Rápido</span>
               <span>[F3] Buscar</span>
               <span>[F6] Granel</span>
@@ -580,7 +705,11 @@ export const PosScreen: React.FC = () => {
       </div>
 
       {/* Right Section: Total & Payment (approx 35%) */}
-      <div className="pos-payment flex-1 lg:flex-[3.5] bg-[var(--ui-surface)] p-4 md:p-6 flex flex-col justify-between overflow-y-auto min-w-0">
+      <div
+        id="pos-payment-panel"
+        ref={paymentSectionRef}
+        className="pos-payment flex-1 lg:flex-[3.5] bg-[var(--ui-surface)] p-4 md:p-6 flex flex-col justify-between lg:overflow-y-auto min-w-0"
+      >
         <div>
           {/* Big Total Display Banner */}
           <div className="pos-total bg-[var(--ui-chrome)] rounded-xl p-5 md:p-6 text-white mb-5 shadow-md flex flex-col items-end justify-center border border-[var(--ui-border-strong)]">
@@ -652,39 +781,39 @@ export const PosScreen: React.FC = () => {
               </div>
 
               {/* Fast Cash Buttons ($5, $10, $20, $50, Exacto) */}
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => handleQuickPay(5)}
-                  className="py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all"
+                  className="py-2.5 min-h-[42px] bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   $5
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickPay(10)}
-                  className="py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all"
+                  className="py-2.5 min-h-[42px] bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   $10
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickPay(20)}
-                  className="py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all"
+                  className="py-2.5 min-h-[42px] bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   $20
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickPay(50)}
-                  className="py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all"
+                  className="py-2.5 min-h-[42px] bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-mono text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   $50
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickPay('exact')}
-                  className="col-span-2 py-2 bg-[var(--ui-surface-hover)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-sans text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all"
+                  className="col-span-2 py-2.5 min-h-[42px] bg-[var(--ui-surface-hover)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] rounded-lg font-sans text-xs md:text-sm font-bold text-[var(--ui-text)] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   Exacto
                 </button>
@@ -729,7 +858,7 @@ export const PosScreen: React.FC = () => {
               : 'bg-[var(--ui-border-strong)] text-white/70 cursor-not-allowed'
           }`}
         >
-          <span className="font-mono text-xs absolute top-2 right-2 bg-black/40 text-white px-2 py-0.5 rounded font-bold">
+          <span className="hidden lg:inline font-mono text-xs absolute top-2 right-2 bg-black/40 text-white px-2 py-0.5 rounded font-bold">
             [F5]
           </span>
           <div className="flex items-center gap-2">
@@ -747,7 +876,7 @@ export const PosScreen: React.FC = () => {
         isOpen={isBulkModalOpen}
         onClose={() => {
           setIsBulkModalOpen(false);
-          barcodeInputRef.current?.focus();
+          if (canAutoFocusInput()) barcodeInputRef.current?.focus();
         }}
       />
 
@@ -756,7 +885,7 @@ export const PosScreen: React.FC = () => {
         initialSupplier={initialSupplierFilter}
         onClose={() => {
           setIsSupplierModalOpen(false);
-          barcodeInputRef.current?.focus();
+          if (canAutoFocusInput()) barcodeInputRef.current?.focus();
         }}
       />
     </div>

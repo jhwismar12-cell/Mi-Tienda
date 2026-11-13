@@ -12,6 +12,9 @@ import { BulkSaleModal } from '../src/components/pos/BulkSaleModal';
 import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
 import { PosScreen } from '../src/components/pos/PosScreen';
 import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
+import { Sidebar, MobileBottomNav } from '../src/components/Sidebar';
+import { TopHeader } from '../src/components/TopHeader';
+import { canAutoFocusInput } from '../src/utils/responsive';
 
 const product: Product = { id: '1', code: 'INTERNAL', barcode: 'BARCODE', name: 'Producto', category: 'Bebidas', costPrice: 2, salePrice: 3, stock: 10, minStock: 1 };
 const shift: BackendCashSession = {
@@ -513,4 +516,54 @@ test('PosScreen supplier instant suggestions and GlobalSearchModal supplier filt
 
   const globalResults = renderer.root.findAllByType('h4').map(h => textOf(h));
   assert.deepEqual(globalResults, ['MANZANA 300 ML PET']);
+});
+
+test('mobile and tablet navigation, jump-to-checkout, and touch autofocus guard behave cleanly', async () => {
+  // Touch device (pointer: fine -> false) suppresses unsolicited autofocus
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+  (globalThis as any).window.matchMedia = (q: string) => ({ matches: q !== '(pointer: fine)' });
+  assert.equal(canAutoFocusInput(), false);
+  (globalThis as any).window.matchMedia = (q: string) => ({ matches: q === '(pointer: fine)' });
+  assert.equal(canAutoFocusInput(), true);
+
+  let menuToggled = false;
+  let menuClosed = false;
+  await act(async () => {
+    renderer.update(
+      <StoreProvider>
+        <Probe />
+        <TopHeader onToggleMobileMenu={() => { menuToggled = true; }} />
+        <Sidebar isMobileOpen={true} onCloseMobile={() => { menuClosed = true; }} />
+        <PosScreen />
+        <MobileBottomNav onOpenMore={() => { menuToggled = true; }} />
+      </StoreProvider>
+    );
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  // Hamburger triggers drawer toggle; selecting Inventario switches screen and closes drawer
+  const openMenuBtn = renderer.root.findByProps({ 'aria-label': 'Abrir menú' });
+  await act(async () => {
+    openMenuBtn.props.onClick();
+  });
+  assert.equal(menuToggled, true);
+
+  const invBtns = renderer.root.findAllByType('button').filter(b => textOf(b).trim() === 'Inventario');
+  assert.ok(invBtns.length >= 2, 'Expected Inventario nav in drawer and bottom bar');
+  await act(async () => {
+    invBtns[0].props.onClick();
+  });
+  assert.equal(store.activeScreen, 'inventory');
+  assert.equal(menuClosed, true);
+
+  // Cart has preloaded item in beforeEach -> mobile/tablet "Ir a Cobrar" quick jump renders cleanly
+  const jumpBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Ir a Cobrar'));
+  assert.ok(jumpBtn, 'Expected mobile/tablet quick jump button to checkout panel');
 });

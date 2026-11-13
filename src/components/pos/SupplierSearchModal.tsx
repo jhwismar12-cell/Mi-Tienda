@@ -13,6 +13,7 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { formatUnitShort } from './BulkSaleModal';
+import { canAutoFocusInput } from '../../utils/responsive';
 
 export const ALL_SUPPLIERS_KEY = '__ALL__';
 export const NO_SUPPLIER_KEY = '__NONE__';
@@ -76,7 +77,9 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
       setSupplierFilter('');
       setProductSearch('');
       setSelectedCategory('ALL');
-      setTimeout(() => productSearchRef.current?.focus(), 60);
+      if (canAutoFocusInput()) {
+        setTimeout(() => productSearchRef.current?.focus(), 60);
+      }
     }
   }, [isOpen, initialSupplier]);
 
@@ -163,19 +166,25 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-2 sm:p-4 animate-in fade-in duration-150">
-      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--ui-surface)] rounded-none sm:rounded-2xl border-0 sm:border border-[var(--ui-border)] shadow-2xl max-w-5xl w-full h-[100dvh] sm:h-auto sm:max-h-[92vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="px-4 sm:px-6 py-3.5 border-b border-[var(--ui-border)] bg-[var(--ui-chrome)] text-white flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
-              <Truck className="w-5 h-5 text-[var(--ui-mint)]" />
+        <div className="px-3.5 sm:px-6 py-3 sm:py-3.5 border-b border-[var(--ui-border)] bg-[var(--ui-chrome)] text-white flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+              <Truck className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--ui-mint)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-bold text-base sm:text-lg leading-tight truncate">
+              <h2 className="font-bold text-sm sm:text-lg leading-tight truncate">
                 Buscar y Vender por Proveedor
               </h2>
-              <p className="text-[11px] text-white/75 truncate">
+              <p className="text-[11px] text-white/75 truncate hidden sm:block">
                 Encuentra productos agrupados por distribuidor sin usar escáner de código de barras
               </p>
             </div>
@@ -185,7 +194,7 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Cerrar búsqueda por proveedor"
-            className="p-1.5 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition-colors shrink-0 cursor-pointer"
+            className="p-2 rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition-colors shrink-0 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -194,8 +203,8 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
         {/* Body: Left Suppliers List + Right Product Catalog */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
           {/* Left Panel: Suppliers */}
-          <div className="md:w-72 border-b md:border-b-0 md:border-r border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-col shrink-0 max-h-48 md:max-h-none">
-            <div className="p-2.5 border-b border-[var(--ui-border)]">
+          <div className="md:w-64 lg:w-72 border-b md:border-b-0 md:border-r border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-col shrink-0">
+            <div className="p-2 sm:p-2.5 border-b border-[var(--ui-border)]">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[var(--ui-muted)] absolute left-2.5 top-2.5" />
                 <input
@@ -203,7 +212,7 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
                   value={supplierFilter}
                   onChange={e => setSupplierFilter(e.target.value)}
                   placeholder="Filtrar distribuidor..."
-                  className="w-full pl-8 pr-7 py-1.5 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
+                  className="w-full pl-8 pr-7 py-1.5 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg text-xs sm:text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
                 />
                 {supplierFilter && (
                   <button
@@ -218,7 +227,7 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto md:overflow-y-auto p-2 flex md:flex-col gap-1.5">
+            <div className="overflow-x-auto md:overflow-x-hidden md:overflow-y-auto p-2 flex flex-nowrap md:flex-col gap-1.5">
               {visibleSuppliers.map(group => {
                 const isActive = selectedSupplier === group.key;
                 return (
@@ -227,9 +236,11 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
                     type="button"
                     onClick={() => {
                       setSelectedSupplier(group.key);
-                      setTimeout(() => productSearchRef.current?.focus(), 20);
+                      if (canAutoFocusInput()) {
+                        setTimeout(() => productSearchRef.current?.focus(), 20);
+                      }
                     }}
-                    className={`px-3 py-2 rounded-xl text-xs flex items-center justify-between gap-2 text-left transition-all shrink-0 md:shrink cursor-pointer border ${
+                    className={`px-3 py-2 min-h-[38px] rounded-xl text-xs flex items-center justify-between gap-2 text-left transition-all shrink-0 md:shrink cursor-pointer border whitespace-nowrap md:whitespace-normal ${
                       isActive
                         ? 'bg-[var(--ui-chrome)] text-white border-[var(--ui-chrome)] font-bold shadow-xs'
                         : 'bg-[var(--ui-surface)] text-[var(--ui-text)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] font-medium'
@@ -417,26 +428,26 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
                                   )
                                 }
                                 aria-label={`Restar ${product.name}`}
-                                className="w-7 h-7 rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] flex items-center justify-center text-[var(--ui-text)] cursor-pointer"
+                                className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] flex items-center justify-center text-[var(--ui-text)] cursor-pointer"
                               >
-                                <Minus className="w-3.5 h-3.5" />
+                                <Minus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleAddProduct(product)}
                                 aria-label={`Sumar ${product.name}`}
-                                className="w-7 h-7 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white flex items-center justify-center cursor-pointer"
+                                className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white flex items-center justify-center cursor-pointer"
                               >
-                                <Plus className="w-3.5 h-3.5" />
+                                <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                               </button>
                             </div>
                           ) : (
                             <button
                               type="button"
                               onClick={() => handleAddProduct(product)}
-                              className="px-3 py-1 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
+                              className="px-3.5 py-2 sm:py-1.5 min-h-[38px] rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
                             >
-                              <Plus className="w-3.5 h-3.5" />
+                              <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                               <span>Agregar</span>
                             </button>
                           )}
@@ -451,11 +462,11 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 sm:px-6 py-3 border-t border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="px-3.5 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 shrink-0">
           <div className="flex items-center gap-2 text-xs sm:text-sm text-[var(--ui-text)]">
             <ShoppingBag className="w-4 h-4 text-[var(--ui-brand-strong)]" />
             <span>
-              Carrito actual: <strong className="font-mono">{cartSummary.totalItems}</strong>{' '}
+              Carrito: <strong className="font-mono">{cartSummary.totalItems}</strong>{' '}
               {cartSummary.totalItems === 1 ? 'ítem' : 'ítems'} ·{' '}
               <strong className="font-mono text-[var(--ui-brand-strong)]">
                 ${cartSummary.totalAmount.toFixed(2)}
@@ -466,10 +477,10 @@ export const SupplierSearchModal: React.FC<SupplierSearchModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer transition-colors"
+            className="px-4 py-2.5 sm:py-2 rounded-xl bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer transition-colors"
           >
             <span>Listo · Volver al carrito</span>
-            <kbd className="font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded">ESC</kbd>
+            <kbd className="hidden lg:inline font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded">ESC</kbd>
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StoreProvider, useStore } from './context/StoreContext';
 import { TopHeader } from './components/TopHeader';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { PosScreen } from './components/pos/PosScreen';
 import { InventoryScreen } from './components/inventory/InventoryScreen';
 import { OrderPlannerScreen } from './components/orders/OrderPlannerScreen';
@@ -21,20 +21,24 @@ import { CheckCircle2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const { activeScreen, toastMessage, currentUser } = useStore();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   if (!currentUser) {
     return <LoginScreen />;
   }
 
   return (
-    <div className="app-shell flex flex-col h-screen w-screen overflow-hidden bg-[var(--ui-bg)] font-sans antialiased text-[var(--ui-text)]">
+    <div className="app-shell flex flex-col h-[100dvh] w-full overflow-hidden bg-[var(--ui-bg)] font-sans antialiased text-[var(--ui-text)]">
       {/* Top Header App Bar */}
-      <TopHeader />
+      <TopHeader onToggleMobileMenu={() => setIsMobileMenuOpen(v => !v)} />
 
       {/* Main Content Area: Sidebar + Screen */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Navigation Sidebar */}
-        <Sidebar />
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Navigation Sidebar (desktop persistent + mobile/tablet drawer) */}
+        <Sidebar
+          isMobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
+        />
 
         {/* Dynamic Screen View */}
         <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--ui-bg)]">
@@ -48,6 +52,9 @@ const MainLayout: React.FC = () => {
         </main>
       </div>
 
+      {/* Sticky Bottom Quick Nav for Mobile & Tablet */}
+      <MobileBottomNav onOpenMore={() => setIsMobileMenuOpen(true)} />
+
       {/* Modals */}
       <ForcePasswordChangeModal />
       <OpenShiftModal />
@@ -60,7 +67,7 @@ const MainLayout: React.FC = () => {
 
       {/* Global Toast Notification */}
       {toastMessage && (
-        <div className="app-toast fixed bottom-5 right-5 z-50 bg-[var(--ui-chrome)] text-white px-4 py-3 rounded-xl shadow-xl flex items-center gap-2.5 text-xs md:text-sm font-medium border border-[var(--ui-border-strong)] animate-in fade-in slide-in-from-bottom-3 duration-200">
+        <div className="app-toast fixed bottom-16 lg:bottom-5 left-3 right-3 sm:left-auto sm:right-5 z-50 bg-[var(--ui-chrome)] text-white px-4 py-3 rounded-xl shadow-xl flex items-center gap-2.5 text-xs md:text-sm font-medium border border-[var(--ui-border-strong)] animate-in fade-in slide-in-from-bottom-3 duration-200">
           <CheckCircle2 className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
           <span>{toastMessage}</span>
         </div>

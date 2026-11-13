@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
+import { canAutoFocusInput } from '../../utils/responsive';
 
 export interface ParsedPromo {
   qty: number;
@@ -101,13 +102,15 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   useEffect(() => {
     if (!isOpen) return;
     setSearch('');
-    const t = setTimeout(() => searchRef.current?.focus(), 40);
+    const t = canAutoFocusInput()
+      ? setTimeout(() => searchRef.current?.focus(), 40)
+      : undefined;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      clearTimeout(t);
+      if (t !== undefined) clearTimeout(t);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [isOpen, onClose]);
@@ -194,11 +197,11 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-3 sm:p-5"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-0 sm:p-5"
       onClick={onClose}
     >
       <div
-        className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="bg-[var(--ui-surface)] border-0 sm:border border-[var(--ui-border)] rounded-none sm:rounded-2xl shadow-2xl w-full max-w-5xl h-[100dvh] sm:h-auto sm:max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -272,9 +275,9 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
         </div>
 
         {/* Content Split */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto lg:overflow-hidden">
           {/* Left Product List */}
-          <div className="lg:col-span-7 overflow-y-auto p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-[var(--ui-border)]">
+          <div className="lg:col-span-7 max-h-[40dvh] lg:max-h-none overflow-y-auto p-3 sm:p-4 border-b lg:border-b-0 lg:border-r border-[var(--ui-border)]">
             {filteredList.length === 0 ? (
               <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center text-[var(--ui-muted)] p-6">
                 <PackageOpen className="w-10 h-10 mb-2 opacity-40" />
@@ -352,7 +355,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
           </div>
 
           {/* Right Action Panel */}
-          <div className="lg:col-span-5 overflow-y-auto p-4 bg-[var(--ui-surface-muted)]/40 flex flex-col gap-4">
+          <div className="lg:col-span-5 lg:overflow-y-auto p-3.5 sm:p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-[var(--ui-surface-muted)]/40 flex flex-col gap-3.5 sm:gap-4">
             {selectedProduct ? (
               <>
                 <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2">

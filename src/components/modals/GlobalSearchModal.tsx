@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, ShoppingBag, Truck } from 'lucide-react';
+import { Search, ShoppingBag, Truck, X } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import {
@@ -95,10 +95,16 @@ export const GlobalSearchModal: React.FC = () => {
   if (!isGlobalSearchOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-xs p-4 pt-16 animate-in fade-in duration-150">
-      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[80vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-xs p-2 pt-2 sm:p-4 sm:pt-16 animate-in fade-in duration-150"
+      onClick={() => setIsGlobalSearchOpen(false)}
+    >
+      <div
+        className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[88dvh] sm:max-h-[80vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Search input header */}
-        <div className="p-4 border-b border-[var(--ui-border)] flex items-center gap-3 bg-[var(--ui-surface)]">
+        <div className="p-3 sm:p-4 border-b border-[var(--ui-border)] flex items-center gap-2.5 sm:gap-3 bg-[var(--ui-surface)]">
           <Search className="w-5 h-5 text-[var(--ui-muted)] shrink-0" />
           <input
             ref={inputRef}
@@ -110,11 +116,19 @@ export const GlobalSearchModal: React.FC = () => {
             }}
             onKeyDown={handleInputKeyDown}
             placeholder="Buscar por nombre, proveedor, código o categoría..."
-            className="w-full text-base md:text-lg text-[var(--ui-text)] outline-none font-medium placeholder:text-[var(--ui-subtle)] bg-transparent"
+            className="w-full text-sm sm:text-base md:text-lg text-[var(--ui-text)] outline-none font-medium placeholder:text-[var(--ui-subtle)] bg-transparent"
           />
-          <kbd className="font-mono text-xs bg-[var(--ui-surface-hover)] text-[var(--ui-muted)] px-2 py-0.5 rounded border border-[var(--ui-border)]">
+          <kbd className="hidden lg:inline font-mono text-xs bg-[var(--ui-surface-hover)] text-[var(--ui-muted)] px-2 py-0.5 rounded border border-[var(--ui-border)]">
             ESC
           </kbd>
+          <button
+            type="button"
+            onClick={() => setIsGlobalSearchOpen(false)}
+            aria-label="Cerrar búsqueda global"
+            className="p-1.5 rounded-lg hover:bg-[var(--ui-surface-hover)] text-[var(--ui-muted)] hover:text-[var(--ui-text)] cursor-pointer lg:hidden"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Supplier Filter Bar */}
