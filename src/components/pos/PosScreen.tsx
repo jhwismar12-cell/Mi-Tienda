@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Barcode,
   Search,
@@ -22,6 +22,11 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { BulkSaleModal, formatUnitShort } from './BulkSaleModal';
+import {
+  SupplierSearchModal,
+  buildSupplierGroups,
+  ALL_SUPPLIERS_KEY
+} from './SupplierSearchModal';
 
 export const PosScreen: React.FC = () => {
   const {
@@ -50,7 +55,49 @@ export const PosScreen: React.FC = () => {
 
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [initialSupplierFilter, setInitialSupplierFilter] = useState<string | null>(null);
+  const [searchHighlightIdx, setSearchHighlightIdx] = useState(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+
+  const supplierGroups = useMemo(() => buildSupplierGroups(products), [products]);
+
+  const parsedSearchInput = useMemo(() => {
+    const raw = barcodeInput.trim();
+    const multMatch = raw.match(/^(\d+(?:[.,]\d+)?)\s*[*xX]\s*(.+)$/);
+    if (multMatch) {
+      const qty = parseFloat(multMatch[1].replace(',', '.'));
+      return {
+        qty: Number.isFinite(qty) && qty > 0 ? Number(qty.toFixed(3)) : 1,
+        query: multMatch[2].trim().toLowerCase()
+      };
+    }
+    return { qty: 1, query: raw.toLowerCase() };
+  }, [barcodeInput]);
+
+  const instantSuggestions = useMemo(() => {
+    const q = parsedSearchInput.query;
+    if (q.length < 2) return [];
+    const exactMatch = products.some(
+      p => (p.barcode && p.barcode.toLowerCase() === q) || p.code.toLowerCase() === q
+    );
+    if (exactMatch) return [];
+    return products
+      .filter(
+        p =>
+          p.name.toLowerCase().includes(q) ||
+          p.code.toLowerCase().includes(q) ||
+          (p.barcode && p.barcode.toLowerCase().includes(q)) ||
+          (p.distributor && p.distributor.toLowerCase().includes(q)) ||
+          p.category.toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  }, [products, parsedSearchInput.query]);
+
+  const openSupplierModal = (supplierKey?: string | null) => {
+    setInitialSupplierFilter(supplierKey || ALL_SUPPLIERS_KEY);
+    setIsSupplierModalOpen(true);
+  };
 
   // Calculations
   const totalArticles = cart.length;
@@ -96,6 +143,10 @@ export const PosScreen: React.FC = () => {
       } else if (e.key === 'F6') {
         e.preventDefault();
         setIsBulkModalOpen(prev => !prev);
+      } else if (e.key === 'F7') {
+        e.preventDefault();
+        setInitialSupplierFilter(ALL_SUPPLIERS_KEY);
+        setIsSupplierModalOpen(prev => !prev);
       } else if (e.key === 'F12') {
         e.preventDefault();
         closeShiftAndGenerateReport();
@@ -169,8 +220,8 @@ export const PosScreen: React.FC = () => {
           </div>
         )}
 
-        {/* Barcode Search Input + Granel Trigger */}
-        <div className="mb-4 flex flex-col sm:flex-row gap-2">
+        {/* Barcode / Product / Supplier Search Input + Quick Triggers */}
+        <div className="mb-2.5 flex flex-col sm:flex-row gap-2">
           <form onSubmit={handleBarcodeSubmit} className="relative group flex-1">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--ui-muted)]">
               <Barcode className="w-5 h-5" />
@@ -179,9 +230,33 @@ export const PosScreen: React.FC = () => {
               ref={barcodeInputRef}
               type="text"
               value={barcodeInput}
-              onChange={(e) => setBarcodeInput(e.target.value)}
-              placeholder="Escanear código de barras o escribir 0.5*código..."
-              aria-label="Escanear código de barras o ingresar código y cantidad"
+              onChange={(e) => {
+                setBarcodeInput(e.target.value);
+                setSearchHighlightIdx(-1);
+              }}
+              onKeyDown={(e) => {
+                if (instantSuggestions.length === 0) return;
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSearchHighlightIdx(prev => (prev + 1) % instantSuggestions.length);
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSearchHighlightIdx(prev => (prev <= 0 ? -1 : prev - 1));
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setBarcodeInput('');
+                  setSearchHighlightIdx(-1);
+                } else if (e.key === 'Enter' && searchHighlightIdx >= 0 && instantSuggestions[searchHighlightIdx]) {
+                  e.preventDefault();
+                  const chosen = instantSuggestions[searchHighlightIdx];
+                  addProductToCart(chosen, parsedSearchInput.qty);
+                  showToast(`"${chosen.name}" agregado al carrito`);
+                  setBarcodeInput('');
+                  setSearchHighlightIdx(-1);
+                }
+              }}
+              placeholder="Buscar por nombre, proveedor o código (ej. dipor, 0.5*código)..."
+              aria-label="Buscar por nombre, proveedor, código de barras y cantidad"
               className="pos-scanner w-full pl-11 pr-20 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
             />
             <div className="absolute inset-y-0 right-0 pr-3 flex items-center gap-1.5">
@@ -197,7 +272,74 @@ export const PosScreen: React.FC = () => {
                 [F3]
               </span>
             </div>
+
+            {instantSuggestions.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 z-40 bg-[var(--ui-surface)] border border-[var(--ui-border-strong)] rounded-xl shadow-xl overflow-hidden divide-y divide-[var(--ui-border)] max-h-72 overflow-y-auto">
+                {instantSuggestions.map((prod, sIdx) => {
+                  const isHighlighted = searchHighlightIdx === sIdx;
+                  return (
+                    <button
+                      key={prod.id}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        addProductToCart(prod, parsedSearchInput.qty);
+                        showToast(`"${prod.name}" agregado al carrito`);
+                        setBarcodeInput('');
+                        setSearchHighlightIdx(-1);
+                        barcodeInputRef.current?.focus();
+                      }}
+                      className={`w-full px-3.5 py-2.5 flex items-center justify-between gap-3 text-left transition-colors cursor-pointer ${
+                        isHighlighted ? 'bg-[var(--ui-surface-hover)]' : 'hover:bg-[var(--ui-surface-muted)]'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs sm:text-sm text-[var(--ui-text)] truncate">
+                          {prod.name}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px] text-[var(--ui-muted)] flex-wrap">
+                          <span className="font-mono">{prod.code}</span>
+                          {prod.distributor && (
+                            <>
+                              <span>·</span>
+                              <span className="px-1.5 py-0.2 rounded bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-semibold">
+                                {prod.distributor}
+                              </span>
+                            </>
+                          )}
+                          <span>·</span>
+                          <span>Stock: {prod.stock}</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono font-bold text-sm text-[var(--ui-brand-strong)]">
+                          ${prod.salePrice.toFixed(2)}
+                        </span>
+                        {parsedSearchInput.qty !== 1 && (
+                          <div className="text-[10px] font-mono text-[var(--ui-muted)]">
+                            × {parsedSearchInput.qty}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </form>
+
+          <button
+            type="button"
+            onClick={() => openSupplierModal(ALL_SUPPLIERS_KEY)}
+            className="px-3.5 py-3 bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+            title="Buscar y vender productos agrupados por proveedor (F7)"
+          >
+            <Truck className="w-4 h-4 text-[var(--ui-mint)]" />
+            <span>Por Proveedor</span>
+            <span className="font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded font-bold">
+              [F7]
+            </span>
+          </button>
 
           <button
             type="button"
@@ -212,6 +354,29 @@ export const PosScreen: React.FC = () => {
             </span>
           </button>
         </div>
+
+        {/* Quick Supplier Filter Strip */}
+        {supplierGroups.length > 1 && (
+          <div className="mb-3 flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ui-muted)] flex items-center gap-1 shrink-0 mr-1">
+              <Truck className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+              <span>Proveedores:</span>
+            </span>
+            {supplierGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => openSupplierModal(group.key)}
+                className="px-2.5 py-1 rounded-full bg-[var(--ui-surface)] hover:bg-[var(--ui-brand)] hover:text-white hover:border-[var(--ui-brand)] border border-[var(--ui-border)] text-[11px] font-semibold text-[var(--ui-secondary)] transition-colors shrink-0 flex items-center gap-1.5 shadow-2xs cursor-pointer"
+              >
+                <span className="truncate max-w-[160px]">
+                  {group.key === ALL_SUPPLIERS_KEY ? 'Todos' : group.label}
+                </span>
+                <span className="font-mono text-[10px] opacity-75">({group.count})</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Quick Access Bar (F1 - F4) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
@@ -402,9 +567,11 @@ export const PosScreen: React.FC = () => {
             <div>
               Artículos: <strong className="text-[var(--ui-text)]">{totalArticles}</strong> | Unidades: <strong className="text-[var(--ui-text)]">{totalUnits}</strong>
             </div>
-            <div className="pos-shortcuts-hint flex gap-4 text-xs">
+            <div className="pos-shortcuts-hint flex flex-wrap gap-3 text-xs">
               <span>[F1-F4] Rápido</span>
               <span>[F3] Buscar</span>
+              <span>[F6] Granel</span>
+              <span>[F7] Proveedor</span>
               <span>[F5] Cobrar</span>
               <span>[F12] Corte Z</span>
             </div>
@@ -580,6 +747,15 @@ export const PosScreen: React.FC = () => {
         isOpen={isBulkModalOpen}
         onClose={() => {
           setIsBulkModalOpen(false);
+          barcodeInputRef.current?.focus();
+        }}
+      />
+
+      <SupplierSearchModal
+        isOpen={isSupplierModalOpen}
+        initialSupplier={initialSupplierFilter}
+        onClose={() => {
+          setIsSupplierModalOpen(false);
           barcodeInputRef.current?.focus();
         }}
       />

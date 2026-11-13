@@ -9,6 +9,9 @@ import { ReceptionScreen } from '../src/components/inventory/ReceptionScreen';
 import { NewProductModal } from '../src/components/modals/NewProductModal';
 import { AltaAlVueloModal } from '../src/components/modals/AltaAlVueloModal';
 import { BulkSaleModal } from '../src/components/pos/BulkSaleModal';
+import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
+import { PosScreen } from '../src/components/pos/PosScreen';
+import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
 
 const product: Product = { id: '1', code: 'INTERNAL', barcode: 'BARCODE', name: 'Producto', category: 'Bebidas', costPrice: 2, salePrice: 3, stock: 10, minStock: 1 };
 const shift: BackendCashSession = {
@@ -380,4 +383,134 @@ test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 even at stoc
   assert.equal(store.cart[0].product.name, 'Huevo Blanco');
   assert.equal(store.cart[0].quantity, 6);
   assert.equal(store.cart[0].subtotal, 1.00);
+});
+
+test('SupplierSearchModal filters by supplier and adds zero-stock items without closing', async (t) => {
+  const cafeBp: BackendProduct = {
+    id_producto: 40, id_categoria: 3, categoria_nombre: 'Bebidas', id_proveedor: 7,
+    proveedor_nombre: 'DIPOR S.A', codigo_interno: 'BEB-CAFE-MOC',
+    nombre: 'CAFE LATO MOCACCINO VD 285 ML', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 1.847, precio_venta_actual: 2.50, margen_minimo_porcentaje: 20,
+    stock_minimo: 2, stock_actual: 2, permite_fraccion: false, activo: true, codigos_barras: []
+  };
+  const pepsiBp: BackendProduct = {
+    id_producto: 41, id_categoria: 3, categoria_nombre: 'Bebidas', id_proveedor: 8,
+    proveedor_nombre: 'Tesalia', codigo_interno: 'BEB-PEP-300',
+    nombre: 'PEPSI 300 ML PET', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 0.182, precio_venta_actual: 0.25, margen_minimo_porcentaje: 20,
+    stock_minimo: 2, stock_actual: 0, permite_fraccion: false, activo: true, codigos_barras: []
+  };
+  t.mock.method(api, 'getProductos', async () => [cafeBp, pepsiBp]);
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(
+      <StoreProvider>
+        <Probe />
+        <SupplierSearchModal isOpen={true} onClose={() => {}} initialSupplier="DIPOR S.A" />
+      </StoreProvider>
+    );
+  });
+  await act(async () => {
+    store.clearCart();
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  // Initially filtered to DIPOR S.A -> CAFE LATO appears, PEPSI does not
+  const headings = renderer.root.findAllByType('h3').map(h => textOf(h));
+  assert.deepEqual(headings, ['CAFE LATO MOCACCINO VD 285 ML']);
+
+  // Click Tesalia supplier in sidebar
+  const tesaliaBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Tesalia'));
+  assert.ok(tesaliaBtn, 'Expected Tesalia supplier button');
+  await act(async () => {
+    tesaliaBtn.props.onClick();
+  });
+
+  const tesaliaHeadings = renderer.root.findAllByType('h3').map(h => textOf(h));
+  assert.deepEqual(tesaliaHeadings, ['PEPSI 300 ML PET']);
+
+  // Add stock-0 product directly from supplier view
+  const addBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Agregar'));
+  assert.ok(addBtn, 'Expected Agregar button');
+  await act(async () => {
+    addBtn.props.onClick({ stopPropagation() {} });
+  });
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].product.code, 'BEB-PEP-300');
+  assert.equal(store.cart[0].quantity, 1);
+});
+
+test('PosScreen supplier instant suggestions and GlobalSearchModal supplier filter add items to cart', async (t) => {
+  const manzBp: BackendProduct = {
+    id_producto: 50, id_categoria: 3, categoria_nombre: 'Bebidas', id_proveedor: 7,
+    proveedor_nombre: 'DIPOR S.A', codigo_interno: 'BEB-MAN-300',
+    nombre: 'MANZANA 300 ML PET', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 0.182, precio_venta_actual: 0.25, margen_minimo_porcentaje: 20,
+    stock_minimo: 2, stock_actual: 10, permite_fraccion: false, activo: true, codigos_barras: []
+  };
+  const arrozBp: BackendProduct = {
+    id_producto: 51, id_categoria: 1, categoria_nombre: 'Abarrotes',
+    codigo_interno: 'GRN-ARR-CON', nombre: 'Arroz Conejo', unidad_medida: 'LIBRA',
+    precio_compra_actual: 0.50, precio_venta_actual: 0.75, margen_minimo_porcentaje: 20,
+    stock_minimo: 5, stock_actual: 0, permite_fraccion: true, activo: true, codigos_barras: []
+  };
+  t.mock.method(api, 'getProductos', async () => [manzBp, arrozBp]);
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(<StoreProvider><Probe /><PosScreen /></StoreProvider>);
+  });
+  await act(async () => {
+    store.clearCart();
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  // Type supplier name in PosScreen search input without barcode scanner
+  const searchInput = renderer.root.findByProps({
+    'aria-label': 'Buscar por nombre, proveedor, código de barras y cantidad'
+  });
+  await act(async () => {
+    searchInput.props.onChange({ target: { value: 'dipor' } });
+  });
+
+  const suggestionBtn = renderer.root.findAllByType('button').find(b =>
+    textOf(b).includes('MANZANA 300 ML PET') && textOf(b).includes('DIPOR S.A')
+  );
+  assert.ok(suggestionBtn, 'Expected instant suggestion matched by supplier name');
+  await act(async () => {
+    suggestionBtn.props.onClick();
+  });
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].product.code, 'BEB-MAN-300');
+
+  // Verify GlobalSearchModal supplier select filter
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><GlobalSearchModal /></StoreProvider>);
+  });
+  await act(async () => {
+    store.setIsGlobalSearchOpen(true);
+  });
+
+  const provSelect = renderer.root.findByProps({
+    'aria-label': 'Filtrar búsqueda global por proveedor'
+  });
+  await act(async () => {
+    provSelect.props.onChange({ target: { value: 'DIPOR S.A' } });
+  });
+
+  const globalResults = renderer.root.findAllByType('h4').map(h => textOf(h));
+  assert.deepEqual(globalResults, ['MANZANA 300 ML PET']);
 });

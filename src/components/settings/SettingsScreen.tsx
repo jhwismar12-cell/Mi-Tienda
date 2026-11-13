@@ -858,6 +858,14 @@ export const SettingsScreen: React.FC = () => {
                 <kbd className="font-mono bg-[var(--ui-brand)] text-white px-2 py-0.5 rounded font-bold text-[11px]">[F5]</kbd>
               </div>
               <div className="p-2.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg flex items-center justify-between">
+                <span className="font-medium text-[var(--ui-secondary)]">Granel / Sin Código</span>
+                <kbd className="font-mono bg-[var(--ui-chrome)] text-white px-2 py-0.5 rounded font-bold text-[11px]">[F6]</kbd>
+              </div>
+              <div className="p-2.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg flex items-center justify-between">
+                <span className="font-medium text-[var(--ui-secondary)]">Buscar por Proveedor</span>
+                <kbd className="font-mono bg-[var(--ui-chrome)] text-white px-2 py-0.5 rounded font-bold text-[11px]">[F7]</kbd>
+              </div>
+              <div className="p-2.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg flex items-center justify-between">
                 <span className="font-medium text-[var(--ui-secondary)]">Guardar Recepción Compra</span>
                 <kbd className="font-mono bg-[var(--ui-brand)] text-white px-2 py-0.5 rounded font-bold text-[11px]">[F10]</kbd>
               </div>
