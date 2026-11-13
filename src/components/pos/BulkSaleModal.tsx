@@ -166,13 +166,13 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
     const qty = qtyOverride ?? weightNum;
     if (!Number.isFinite(qty) || qty <= 0) return;
     addProductToCart(selectedProduct, qty);
-    if (selectedProduct.stock > 0) onClose();
+    onClose();
   };
 
   const handleAddPromo = (prod: Product, promo: ParsedPromo) => {
     const unitPrice = Number((promo.total / promo.qty).toFixed(6));
     addProductToCart(prod, promo.qty, { unitPrice, promoLabel: promo.label });
-    if (prod.stock >= promo.qty) onClose();
+    onClose();
   };
 
   const handleAddByDollar = (dollarsOverride?: number) => {
@@ -184,7 +184,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       unitPrice: calc.unitPrice,
       promoLabel: calc.promoLabel
     });
-    if (selectedProduct.stock >= calc.qty) onClose();
+    onClose();
   };
 
   const dollarPreview = selectedProduct ? computeDollarSelection(selectedProduct, dollarNum) : null;
@@ -297,7 +297,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                         isSelected
                           ? 'border-[var(--ui-brand)] bg-[var(--ui-brand-soft)] shadow-xs ring-1 ring-[var(--ui-brand)]/30'
                           : 'border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)]'
-                      } ${outOfStock ? 'opacity-75' : ''}`}
+                      }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -375,23 +375,20 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                   </div>
 
                   {selectedProduct.stock <= 0 ? (
-                    <div className="p-2.5 rounded-lg bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] text-[var(--ui-danger-text)] text-xs space-y-2">
-                      <div className="flex items-center gap-1.5 font-bold">
+                    <div className="p-2.5 rounded-lg bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] text-[var(--ui-warning-text)] text-xs flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 font-semibold">
                         <AlertTriangle className="w-4 h-4 shrink-0" />
-                        <span>Sin existencias en inventario (Stock 0)</span>
+                        <span>Stock actual: 0 (venta permitida sin stock)</span>
                       </div>
-                      <p className="text-[11px] opacity-90">
-                        El control estricto está activo: carga existencias en Inventario o Recepción para poder venderlo.
-                      </p>
                       <button
                         type="button"
                         onClick={() => {
                           onClose();
                           setActiveScreen('inventory');
                         }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-border)] text-[var(--ui-text)] font-bold text-[11px] hover:bg-[var(--ui-surface-hover)]"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-border)] text-[var(--ui-text)] font-bold text-[11px] hover:bg-[var(--ui-surface-hover)] shrink-0"
                       >
-                        <span>Ir a Inventario a cargar stock</span>
+                        <span>Cargar stock</span>
                         <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
@@ -416,9 +413,8 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                     </div>
                     <button
                       type="button"
-                      disabled={selectedProduct.stock < selectedPromo.qty}
                       onClick={() => handleAddPromo(selectedProduct, selectedPromo)}
-                      className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs transition-colors"
+                      className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs transition-colors"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Agregar {selectedPromo.label}</span>
@@ -447,9 +443,8 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                       <button
                         key={preset}
                         type="button"
-                        disabled={selectedProduct.stock < preset}
                         onClick={() => handleAddWeight(preset)}
-                        className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] hover:border-[var(--ui-brand)] hover:bg-[var(--ui-brand-soft)] disabled:opacity-40 disabled:cursor-not-allowed font-mono font-bold text-xs text-[var(--ui-text)] transition-colors"
+                        className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] hover:border-[var(--ui-brand)] hover:bg-[var(--ui-brand-soft)] font-mono font-bold text-xs text-[var(--ui-text)] transition-colors"
                       >
                         {preset} {selectedUnitShort}
                       </button>
@@ -461,7 +456,6 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                       type="number"
                       step={selectedProduct.allowFraction ? '0.01' : '1'}
                       min={selectedProduct.allowFraction ? '0.01' : '1'}
-                      max={selectedProduct.stock > 0 ? selectedProduct.stock : undefined}
                       value={weightInput}
                       onChange={(e) => setWeightInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -474,7 +468,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                     />
                     <button
                       type="button"
-                      disabled={selectedProduct.stock <= 0 || weightNum <= 0}
+                      disabled={weightNum <= 0}
                       onClick={() => handleAddWeight()}
                       className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
                     >
@@ -505,7 +499,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                         <button
                           key={d}
                           type="button"
-                          disabled={!sim || selectedProduct.stock < sim.qty}
+                          disabled={!sim}
                           onClick={() => handleAddByDollar(d)}
                           className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] hover:border-[var(--ui-brand)] hover:bg-[var(--ui-brand-soft)] disabled:opacity-40 disabled:cursor-not-allowed font-mono font-bold text-xs text-[var(--ui-text)] transition-colors"
                         >
@@ -535,7 +529,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                     </div>
                     <button
                       type="button"
-                      disabled={!dollarPreview || selectedProduct.stock < dollarPreview.qty}
+                      disabled={!dollarPreview}
                       onClick={() => handleAddByDollar()}
                       className="primary-action px-4 py-2 rounded-xl bg-[var(--ui-chrome)] hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-1.5"
                     >

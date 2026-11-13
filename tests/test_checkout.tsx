@@ -291,7 +291,7 @@ test('failed quick product creation preserves the form and barcode without addin
   assert.equal(renderer.root.findAllByType('button').find(n => n.props.type === 'submit')!.props.disabled, false);
 });
 
-test('fractional barcode multiplier and split combo lines enforce total stock limit', async () => {
+test('fractional barcode multiplier, split combo lines, and zero-stock sales are allowed', async () => {
   const arroz: Product = {
     id: '20', code: 'GRN-ARR-MAR', name: 'Arroz Maraqueño', category: 'Abarrotes',
     costPrice: 0.35, salePrice: 0.50, stock: 5, minStock: 1, unit: 'LIBRA', allowFraction: true
@@ -300,6 +300,10 @@ test('fractional barcode multiplier and split combo lines enforce total stock li
     id: '21', code: 'GRN-HUV-UNI', name: 'Huevo', category: 'Abarrotes',
     costPrice: 0.11, salePrice: 0.15, stock: 7, minStock: 6, unit: 'UNIDAD', allowFraction: false,
     description: 'Promo: 6 x $1.00'
+  };
+  const sinStock: Product = {
+    id: '22', code: 'BEB-PEP-300', name: 'PEPSI 300 ML PET', category: 'Bebidas',
+    costPrice: 0.182, salePrice: 0.25, stock: 0, minStock: 2, unit: 'UNIDAD', allowFraction: false
   };
 
   await act(async () => {
@@ -317,15 +321,23 @@ test('fractional barcode multiplier and split combo lines enforce total stock li
   assert.equal(store.cart[2].quantity, 6);
   assert.equal(store.cart[2].subtotal, 1.00);
 
-  // Attempting to add 1 more loose egg exceeds combined stock (7 eggs already reserved in 2 lines)
+  // Adding above current stock and adding stock-0 items are both permitted
   await act(async () => {
     store.addProductToCart(huevo, 1);
+    store.addProductToCart(sinStock, 2);
   });
-  assert.equal(store.cart[1].quantity, 1);
-  assert.match(store.toastMessage!, /Solo hay 7/);
+  assert.equal(store.cart[1].quantity, 2);
+  assert.equal(store.cart.length, 4);
+  assert.equal(store.cart[3].product.code, 'BEB-PEP-300');
+  assert.equal(store.cart[3].quantity, 2);
+
+  await act(async () => {
+    store.updateCartQuantity(3, 5);
+  });
+  assert.equal(store.cart[3].quantity, 5);
 });
 
-test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 or by dollar value', async (t) => {
+test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 even at stock 0', async (t) => {
   const arrozBp: BackendProduct = {
     id_producto: 30, id_categoria: 1, categoria_nombre: 'Abarrotes', codigo_interno: 'GRN-ARR',
     nombre: 'Arroz Conejo', unidad_medida: 'LIBRA', precio_compra_actual: 0.5, precio_venta_actual: 0.75,
@@ -336,7 +348,7 @@ test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 or by dollar
     id_producto: 31, id_categoria: 1, categoria_nombre: 'Abarrotes', codigo_interno: 'GRN-HUV',
     nombre: 'Huevo Blanco', descripcion: 'Promo: 6 x $1.00', unidad_medida: 'UNIDAD',
     precio_compra_actual: 0.11, precio_venta_actual: 0.15, margen_minimo_porcentaje: 20,
-    stock_minimo: 6, stock_actual: 12, permite_fraccion: false, activo: true, codigos_barras: []
+    stock_minimo: 6, stock_actual: 0, permite_fraccion: false, activo: true, codigos_barras: []
   };
   t.mock.method(api, 'getProductos', async () => [arrozBp, huevoBp]);
 
@@ -355,11 +367,12 @@ test('BulkSaleModal renders unbarcoded items and adds combo 6x$1.00 or by dollar
       ? node.children.map(textOf).join('')
       : '';
 
-  // Trigger quick combo button for Huevo Blanco (6 x $1.00)
+  // Trigger quick combo button for Huevo Blanco (6 x $1.00) even when stock is 0
   const comboBtn = renderer.root.findAllByType('button').find(
     btn => textOf(btn).includes('Combo 6 × $1.00')
   );
   assert.ok(comboBtn, 'Expected quick combo button in BulkSaleModal');
+  assert.ok(!comboBtn.props.disabled, 'Combo button should not be disabled at stock 0');
   await act(async () => {
     comboBtn.props.onClick({ stopPropagation() {} });
   });

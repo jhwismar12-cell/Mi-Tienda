@@ -351,7 +351,6 @@ export const PosScreen: React.FC = () => {
                         type="number"
                         step={isFraction ? '0.01' : '1'}
                         min={isFraction ? '0.01' : '1'}
-                        max={item.product.stock}
                         value={item.quantity}
                         onChange={(e) => {
                           const val = parseFloat(e.target.value.replace(',', '.'));

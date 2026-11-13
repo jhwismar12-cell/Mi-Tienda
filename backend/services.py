@@ -484,9 +484,7 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             if item_sub < 0:
                 raise ValueError("El descuento del producto supera su importe.")
             stock_before = stock_balances[it.id_producto]
-            if cant > stock_before:
-                raise ValueError(f"Stock insuficiente para {prod['Nombre']}: disponible {stock_before}.")
-            stock_balances[it.id_producto] = round(stock_before - cant, 3)
+            stock_balances[it.id_producto] = max(0.0, round(stock_before - cant, 3))
             subtotal_total += item_sub
 
             detalle_inserts.append({
@@ -540,9 +538,9 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             )
             det_id = cursor.lastrowid
 
-            # Deduct stock
+            # Deduct stock (clamped at 0 so zero-stock sales do not create negative stock debt)
             stock_ant = d["stock_actual"]
-            stock_post = round(stock_ant - d["cantidad"], 3)
+            stock_post = max(0.0, round(stock_ant - d["cantidad"], 3))
             cursor.execute(
                 "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
                 (stock_post, d["id_producto"])

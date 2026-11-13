@@ -608,27 +608,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Cart operations
   const addProductToCart = useCallback(
     (product: Product, quantity = 1, options?: { unitPrice?: number; promoLabel?: string }) => {
-      if (product.stock <= 0) {
-        sounds.playErrorBeep();
-        showToast(`❌ "${product.name}" tiene Stock 0. Realiza un ajuste o recepción de compra.`);
-        return;
-      }
-
       const qty = Number(quantity.toFixed(3));
       if (!Number.isFinite(qty) || qty <= 0) return;
       const effectivePrice = options?.unitPrice !== undefined ? options.unitPrice : product.salePrice;
       const promoLabel = options?.promoLabel;
 
       setCart(prev => {
-        const totalInCart = prev
-          .filter(item => item.product.id === product.id)
-          .reduce((sum, item) => sum + item.quantity, 0);
-        if (Number((totalInCart + qty).toFixed(3)) > product.stock + 1e-6) {
-          sounds.playErrorBeep();
-          showToast(`⚠️ Solo hay ${product.stock} en stock de "${product.name}".`);
-          return prev;
-        }
-
         const existingIdx = prev.findIndex(
           item =>
             item.product.id === product.id &&
@@ -764,15 +749,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     setCart(prev => {
       if (index < 0 || index >= prev.length) return prev;
-      const target = prev[index];
-      const otherRowsQty = prev
-        .filter((it, i) => i !== index && it.product.id === target.product.id)
-        .reduce((sum, it) => sum + it.quantity, 0);
-      if (Number((otherRowsQty + nextQty).toFixed(3)) > target.product.stock + 1e-6) {
-        sounds.playErrorBeep();
-        showToast(`⚠️ Solo hay ${target.product.stock} disponible(s) de "${target.product.name}".`);
-        return prev;
-      }
       const updated = [...prev];
       updated[index] = {
         ...updated[index],
@@ -781,7 +757,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       };
       return updated;
     });
-  }, [showToast]);
+  }, []);
 
   const removeFromCart = (index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));

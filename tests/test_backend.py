@@ -546,14 +546,15 @@ class TestTiendaBackend(unittest.TestCase):
             self.assertEqual([tuple(r) for r in balances], [(2, 4), (4, 7)])
         self.assertEqual(self.client.get("/api/compras").json()[0]["proveedor_nombre"], "Proveedor de prueba")
 
-    def test_25_repeated_sale_lines_and_insufficient_stock(self):
+    def test_25_repeated_sale_lines_and_zero_stock_allowed(self):
         payload = self.sale_payload(items=[{"id_producto": 1, "cantidad": 1, "precio_unitario": 3}] * 2, monto_recibido=6)
         self.assertEqual(self.client.post("/api/ventas/cobrar", json=payload).status_code, 200)
-        self.assertEqual(self.client.post("/api/ventas/cobrar", json=self.sale_payload()).status_code, 400)
+        # Selling when stock is already 0 is allowed and clamps StockActual to 0
+        self.assertEqual(self.client.post("/api/ventas/cobrar", json=self.sale_payload()).status_code, 200)
         with get_db() as conn:
             self.assertEqual(conn.execute("SELECT StockActual FROM PRODUCTOS WHERE IDProducto = 1").fetchone()[0], 0)
             balances = conn.execute("SELECT StockAnterior, StockPosterior FROM MOVIMIENTOS_INVENTARIO WHERE TipoMovimiento = 'SALIDA_VENTA' ORDER BY IDMovimiento").fetchall()
-            self.assertEqual([tuple(r) for r in balances], [(2, 1), (1, 0)])
+            self.assertEqual([tuple(r) for r in balances], [(2, 1), (1, 0), (0, 0)])
 
     def test_26_editing_opening_float_preserves_deposits(self):
         self.client.post("/api/caja/movimiento", json={"tipo": "INGRESO", "monto": 5, "descripcion": "Cambio"})
@@ -743,7 +744,7 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertEqual(huevo_res.status_code, 200)
         huevo = huevo_res.json()
 
-        # 3. Usar caja activa (o abrir si esta cerrada) y validar control estricto con stock 0
+        # 3. Usar caja activa (o abrir si esta cerrada) y validar venta permitida con stock 0 (clamp a 0)
         caja_activa = self.client.get("/api/caja/activa")
         if caja_activa.status_code == 200 and caja_activa.json() and caja_activa.json().get("estado") == "ABIERTA":
             id_caja = caja_activa.json()["id_sesion_caja"]
@@ -752,13 +753,15 @@ class TestTiendaBackend(unittest.TestCase):
             self.assertEqual(caja_res.status_code, 200)
             id_caja = caja_res.json()["id_sesion_caja"]
 
-        fail_sale = self.client.post("/api/ventas/cobrar", json={
+        zero_stock_sale = self.client.post("/api/ventas/cobrar", json={
             "id_sesion_caja": id_caja,
             "items": [{"id_producto": huevo["id_producto"], "cantidad": 1, "precio_unitario": 0.15}],
             "metodo_pago": "EFECTIVO",
             "monto_recibido": 1.0
         })
-        self.assertEqual(fail_sale.status_code, 400)
+        self.assertEqual(zero_stock_sale.status_code, 200)
+        prods_mid = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
+        self.assertAlmostEqual(prods_mid[huevo["id_producto"]]["stock_actual"], 0.0, places=3)
 
         # 4. Ajustar stock decimal (+2.5 lb arroz) y +7 huevos, luego cobrar fraccion + combo + suelto
         adj_arroz = self.client.post("/api/inventario/ajuste", json={
