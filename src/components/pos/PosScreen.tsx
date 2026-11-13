@@ -18,7 +18,8 @@ import {
   PackageX,
   Truck,
   Scale,
-  ArrowDown
+  ArrowDown,
+  Camera
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
@@ -28,6 +29,7 @@ import {
   buildSupplierGroups,
   ALL_SUPPLIERS_KEY
 } from './SupplierSearchModal';
+import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 import { canAutoFocusInput } from '../../utils/responsive';
 
 export const PosScreen: React.FC = () => {
@@ -59,6 +61,8 @@ export const PosScreen: React.FC = () => {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
   const [initialSupplierFilter, setInitialSupplierFilter] = useState<string | null>(null);
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const [lastScannedFeedback, setLastScannedFeedback] = useState<string | null>(null);
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const paymentSectionRef = useRef<HTMLDivElement>(null);
@@ -170,6 +174,23 @@ export const PosScreen: React.FC = () => {
     setBarcodeInput('');
   };
 
+  const handleCameraDetected = (scannedCode: string) => {
+    const trimmed = scannedCode.trim();
+    if (!trimmed) return;
+    const upper = trimmed.toUpperCase();
+    const matched = products.find(
+      (p) => (p.barcode && p.barcode.toUpperCase() === upper) || p.code.toUpperCase() === upper
+    );
+    if (!matched) {
+      setLastScannedFeedback(null);
+      setIsCameraScannerOpen(false);
+      addToCartByBarcodeOrCode(trimmed);
+      return;
+    }
+    addToCartByBarcodeOrCode(trimmed);
+    setLastScannedFeedback(`${matched.name} — $${matched.salePrice.toFixed(2)}`);
+  };
+
   const handleQuickPay = (amount: number | 'exact') => {
     if (amount === 'exact') {
       setCashReceived(subtotal.toFixed(2));
@@ -262,9 +283,22 @@ export const PosScreen: React.FC = () => {
               }}
               placeholder="Buscar por nombre, proveedor o código (ej. dipor, 0.5*código)..."
               aria-label="Buscar por nombre, proveedor, código de barras y cantidad"
-              className="pos-scanner w-full pl-11 pr-20 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
+              className="pos-scanner w-full pl-11 pr-36 lg:pr-44 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
             />
-            <div className="absolute inset-y-0 right-0 pr-3 flex items-center gap-1.5">
+            <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setLastScannedFeedback(null);
+                  setIsCameraScannerOpen(true);
+                }}
+                aria-label="Escanear código de barras con cámara"
+                title="Escanear código de barras con cámara (Celular / Tablet)"
+                className="px-2.5 py-1.5 min-h-[34px] bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+              >
+                <Camera className="w-4 h-4 shrink-0" />
+                <span>Cámara</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setIsGlobalSearchOpen(true)}
@@ -887,6 +921,21 @@ export const PosScreen: React.FC = () => {
           setIsSupplierModalOpen(false);
           if (canAutoFocusInput()) barcodeInputRef.current?.focus();
         }}
+      />
+
+      <BarcodeCameraModal
+        isOpen={isCameraScannerOpen}
+        onClose={() => {
+          setIsCameraScannerOpen(false);
+          setLastScannedFeedback(null);
+          if (canAutoFocusInput()) barcodeInputRef.current?.focus();
+        }}
+        onDetected={handleCameraDetected}
+        title="Escanear para Vender (POS)"
+        subtitle="Apunta la cámara trasera al código de barras para agregarlo al carrito"
+        allowContinuous={true}
+        defaultContinuous={true}
+        lastFeedback={lastScannedFeedback}
       />
     </div>
   );

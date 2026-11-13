@@ -12,6 +12,8 @@ import { BulkSaleModal } from '../src/components/pos/BulkSaleModal';
 import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
 import { PosScreen } from '../src/components/pos/PosScreen';
 import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
+import { BarcodeCameraModal, createBarcodeReader } from '../src/components/modals/BarcodeCameraModal';
+import { InventoryScreen } from '../src/components/inventory/InventoryScreen';
 import { Sidebar, MobileBottomNav } from '../src/components/Sidebar';
 import { TopHeader } from '../src/components/TopHeader';
 import { canAutoFocusInput } from '../src/utils/responsive';
@@ -566,4 +568,107 @@ test('mobile and tablet navigation, jump-to-checkout, and touch autofocus guard 
   // Cart has preloaded item in beforeEach -> mobile/tablet "Ir a Cobrar" quick jump renders cleanly
   const jumpBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Ir a Cobrar'));
   assert.ok(jumpBtn, 'Expected mobile/tablet quick jump button to checkout panel');
+});
+
+test('camera barcode scanner configures reader and works across POS, Inventory, NewProduct, and Reception', async () => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+  (globalThis as any).window.matchMedia = () => ({ matches: false });
+
+  const reader = createBarcodeReader();
+  assert.equal(typeof reader.decodeFromConstraints, 'function');
+  assert.equal(typeof reader.decodeFromImageElement, 'function');
+
+  // 1. PosScreen: open camera scanner, scan known barcode, and auto-close on unknown barcode for Alta al Vuelo
+  await act(async () => {
+    store.clearCart();
+    renderer.update(<StoreProvider><Probe /><PosScreen /></StoreProvider>);
+  });
+  await act(async () => {
+    store.clearCart();
+  });
+
+  const posCamBtn = renderer.root.findByProps({ 'aria-label': 'Escanear código de barras con cámara' });
+  await act(async () => {
+    posCamBtn.props.onClick();
+  });
+
+  let modal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(modal.props.isOpen, true);
+  assert.equal(modal.props.allowContinuous, true);
+
+  const fileInput = renderer.root.findByProps({ capture: 'environment' });
+  assert.equal(fileInput.props.accept, 'image/*');
+
+  // Scan known barcode -> adds item to cart and keeps camera open in continuous mode with feedback
+  await act(async () => {
+    modal.props.onDetected('BARCODE');
+  });
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].product.code, 'INTERNAL');
+  modal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(modal.props.isOpen, true);
+  assert.match(modal.props.lastFeedback ?? '', /Producto/);
+
+  // Scan unknown barcode -> closes camera scanner and triggers Alta al Vuelo modal
+  await act(async () => {
+    modal.props.onDetected('7861009998887');
+  });
+  modal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(modal.props.isOpen, false);
+  assert.equal(store.isAltaAlVueloOpen, true);
+  assert.equal(store.unknownBarcode, '7861009998887');
+
+  // 2. NewProductModal: camera fills barcode field
+  await act(async () => {
+    store.setIsAltaAlVueloOpen(false);
+    renderer.update(<StoreProvider><Probe /><NewProductModal /></StoreProvider>);
+  });
+  await act(async () => {
+    store.setIsNewProductModalOpen(true);
+  });
+
+  const newProdCamBtn = renderer.root.findByProps({ 'aria-label': 'Escanear código de barras con cámara' });
+  await act(async () => {
+    newProdCamBtn.props.onClick();
+  });
+  const newProdCamModal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(newProdCamModal.props.isOpen, true);
+  await act(async () => {
+    newProdCamModal.props.onDetected('7861001234567');
+  });
+  const barcodeInput = renderer.root.findByProps({ placeholder: 'Opcional' });
+  assert.equal(barcodeInput.props.value, '7861001234567');
+
+  // 3. InventoryScreen & ReceptionScreen: camera scan buttons open BarcodeCameraModal cleanly
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><InventoryScreen /></StoreProvider>);
+  });
+  const invCamBtn = renderer.root.findByProps({ 'aria-label': 'Escanear código de barras para buscar' });
+  await act(async () => {
+    invCamBtn.props.onClick();
+  });
+  const invCamModal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(invCamModal.props.isOpen, true);
+  await act(async () => {
+    invCamModal.props.onDetected('BARCODE');
+  });
+  const invSearchInput = renderer.root.findByProps({
+    placeholder: 'Buscar por nombre, código de factura o código de barras...'
+  });
+  assert.equal(invSearchInput.props.value, 'BARCODE');
+
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><ReceptionScreen /></StoreProvider>);
+  });
+  const recCamBtn = renderer.root.findByProps({ 'aria-label': 'Escanear código de barras con cámara' });
+  await act(async () => {
+    recCamBtn.props.onClick();
+  });
+  const recCamModal = renderer.root.findByType(BarcodeCameraModal);
+  assert.equal(recCamModal.props.isOpen, true);
+  await act(async () => {
+    recCamModal.props.onDetected('BARCODE');
+  });
+  assert.match(recCamModal.props.lastFeedback ?? '', /Producto/);
 });

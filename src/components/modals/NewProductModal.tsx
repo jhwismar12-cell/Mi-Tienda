@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { Plus, X, Package, CheckCircle2 } from 'lucide-react';
+import { Plus, X, Package, CheckCircle2, Camera } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Category, STORE_CATEGORIES } from '../../types';
+import { BarcodeCameraModal } from './BarcodeCameraModal';
 
 export const NewProductModal: React.FC = () => {
   const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct } = useStore();
@@ -9,6 +10,7 @@ export const NewProductModal: React.FC = () => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [barcode, setBarcode] = useState('');
+  const [isBarcodeCameraOpen, setIsBarcodeCameraOpen] = useState(false);
   const [category, setCategory] = useState<Category>('Abarrotes');
   const [unit, setUnit] = useState('UNIDAD');
   const [allowFraction, setAllowFraction] = useState(false);
@@ -57,6 +59,7 @@ export const NewProductModal: React.FC = () => {
   const categories = STORE_CATEGORIES;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
       <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
         {/* Header */}
@@ -108,13 +111,25 @@ export const NewProductModal: React.FC = () => {
               <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
                 Código de Barras (EAN-13)
               </label>
-              <input
-                type="text"
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
-                placeholder="Opcional"
-                className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono"
-              />
+              <div className="flex items-stretch gap-2">
+                <input
+                  type="text"
+                  value={barcode}
+                  onChange={(e) => setBarcode(e.target.value)}
+                  placeholder="Opcional"
+                  className="flex-1 min-w-0 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsBarcodeCameraOpen(true)}
+                  aria-label="Escanear código de barras con cámara"
+                  title="Escanear código de barras con cámara"
+                  className="px-3 py-2 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 shrink-0" />
+                  <span>Cámara</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -262,5 +277,14 @@ export const NewProductModal: React.FC = () => {
         </form>
       </div>
     </div>
+
+    <BarcodeCameraModal
+      isOpen={isBarcodeCameraOpen}
+      onClose={() => setIsBarcodeCameraOpen(false)}
+      onDetected={(scanned) => setBarcode(scanned)}
+      title="Capturar Código de Barras"
+      subtitle="Escanea el código del envase para asignarlo al nuevo producto"
+    />
+    </>
   );
 };

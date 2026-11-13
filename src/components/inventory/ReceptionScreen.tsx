@@ -34,6 +34,7 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { ReceptionDraftItem, PurchaseOrder } from '../../types';
 import { api, AIProcessedInvoice } from '../../services/api';
+import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 
 export const ReceptionScreen: React.FC = () => {
   const {
@@ -79,6 +80,8 @@ export const ReceptionScreen: React.FC = () => {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [isBarcodeCameraOpen, setIsBarcodeCameraOpen] = useState(false);
+  const [lastScannedFeedback, setLastScannedFeedback] = useState<string | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
 
   // Reception Draft Items
@@ -337,13 +340,15 @@ export const ReceptionScreen: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [items, provider, providerId, invoiceNumber, invoiceDate, totalUnits, totalAmount, selectedOrderForReception]);
 
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!barcodeInput.trim()) return;
-
-    const query = barcodeInput.trim();
-    const product = products.find(p => p.code === query || p.barcode === query);
-    const existingInDraft = items.find(it => it.code === (product?.code || query));
+  const processScannedOrEnteredCode = (rawCode: string): string => {
+    const query = rawCode.trim();
+    const upperQuery = query.toUpperCase();
+    const product = products.find(
+      p => p.code.toUpperCase() === upperQuery || (p.barcode && p.barcode.toUpperCase() === upperQuery)
+    );
+    const existingInDraft = items.find(
+      it => it.code.toUpperCase() === (product?.code || query).toUpperCase()
+    );
 
     if (existingInDraft) {
       setItems(prev =>
@@ -354,37 +359,45 @@ export const ReceptionScreen: React.FC = () => {
         )
       );
       showToast(`Cantidad incrementada para ${existingInDraft.name}`);
-    } else {
-      if (product) {
-        const newItem: ReceptionDraftItem = {
-          id: `rec-${Date.now()}`,
-          code: product.code,
-          name: product.name,
-          quantityReceived: 1,
-          unitCost: product.costPrice,
-          previousCost: product.costPrice,
-          salePrice: product.salePrice,
-          suggestedSalePrice: product.salePrice
-        };
-        setItems(prev => [...prev, newItem]);
-        showToast(`Producto ${product.name} agregado a la recepción`);
-      } else {
-        const newItem: ReceptionDraftItem = {
-          id: `rec-${Date.now()}`,
-          code: query,
-          name: `Nuevo Producto (${query})`,
-          quantityReceived: 1,
-          unitCost: 1.00,
-          previousCost: 1.00,
-          salePrice: 1.30,
-          suggestedSalePrice: 1.30,
-          isNewProduct: true
-        };
-        setItems(prev => [...prev, newItem]);
-        showToast(`Nuevo ítem ${query} agregado`);
-      }
+      return `${existingInDraft.name} (×${existingInDraft.quantityReceived + 1})`;
     }
 
+    if (product) {
+      const newItem: ReceptionDraftItem = {
+        id: `rec-${Date.now()}`,
+        code: product.code,
+        name: product.name,
+        quantityReceived: 1,
+        unitCost: product.costPrice,
+        previousCost: product.costPrice,
+        salePrice: product.salePrice,
+        suggestedSalePrice: product.salePrice
+      };
+      setItems(prev => [...prev, newItem]);
+      showToast(`Producto ${product.name} agregado a la recepción`);
+      return `${product.name} (+1)`;
+    }
+
+    const newItem: ReceptionDraftItem = {
+      id: `rec-${Date.now()}`,
+      code: query,
+      name: `Nuevo Producto (${query})`,
+      quantityReceived: 1,
+      unitCost: 1.00,
+      previousCost: 1.00,
+      salePrice: 1.30,
+      suggestedSalePrice: 1.30,
+      isNewProduct: true
+    };
+    setItems(prev => [...prev, newItem]);
+    showToast(`Nuevo ítem ${query} agregado`);
+    return `Nuevo ítem (${query})`;
+  };
+
+  const handleBarcodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!barcodeInput.trim()) return;
+    processScannedOrEnteredCode(barcodeInput);
     setBarcodeInput('');
   };
 
@@ -640,11 +653,24 @@ export const ReceptionScreen: React.FC = () => {
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               placeholder="Escanear código de barras o escribir producto a ingresar..."
-              className="w-full bg-transparent text-sm text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-subtle)]"
+              className="w-full min-w-0 bg-transparent text-sm text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-subtle)]"
             />
             <button
+              type="button"
+              onClick={() => {
+                setLastScannedFeedback(null);
+                setIsBarcodeCameraOpen(true);
+              }}
+              aria-label="Escanear código de barras con cámara"
+              title="Escanear código con cámara (Celular / Tablet)"
+              className="ml-2 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Cámara</span>
+            </button>
+            <button
               type="submit"
-              className="secondary-action ml-2 bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] px-3 py-1 rounded-lg text-xs font-semibold transition-colors shrink-0 cursor-pointer"
+              className="secondary-action ml-1.5 bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors shrink-0 cursor-pointer"
             >
               Agregar
             </button>
@@ -1129,6 +1155,23 @@ export const ReceptionScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      <BarcodeCameraModal
+        isOpen={isBarcodeCameraOpen}
+        onClose={() => {
+          setIsBarcodeCameraOpen(false);
+          setLastScannedFeedback(null);
+        }}
+        onDetected={(scanned) => {
+          const feedback = processScannedOrEnteredCode(scanned);
+          setLastScannedFeedback(feedback);
+        }}
+        title="Recepcionar por Cámara"
+        subtitle="Escanea los códigos de los productos recibidos para sumarlos al ingreso"
+        allowContinuous={true}
+        defaultContinuous={true}
+        lastFeedback={lastScannedFeedback}
+      />
     </div>
   );
 };

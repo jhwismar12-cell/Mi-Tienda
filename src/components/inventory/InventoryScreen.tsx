@@ -31,10 +31,12 @@ import {
   Menu,
   Check,
   Barcode,
-  ScanLine
+  ScanLine,
+  Camera
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types';
+import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 
 type SortOption = 
   | 'name_asc' 
@@ -106,6 +108,7 @@ export const InventoryScreen: React.FC = () => {
   // Edit Product / Price & Barcode Modal
   const [editProductModal, setEditProductModal] = useState<Product | null>(null);
   const [editBarcode, setEditBarcode] = useState<string>('');
+  const [cameraTarget, setCameraTarget] = useState<'search' | 'edit' | null>(null);
   const [editSalePrice, setEditSalePrice] = useState<string>('');
   const [editCostPrice, setEditCostPrice] = useState<string>('');
   const [editUnit, setEditUnit] = useState<string>('UNIDAD');
@@ -395,20 +398,30 @@ export const InventoryScreen: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Buscar por nombre, código de factura o código de barras..."
-              className="w-full pl-9 pr-14 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs md:text-sm text-[var(--ui-text)] placeholder:text-[var(--ui-subtle)] outline-none focus:border-[var(--ui-brand)] focus:bg-[var(--ui-surface)] transition-all shadow-xs"
+              className="w-full pl-9 pr-24 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs md:text-sm text-[var(--ui-text)] placeholder:text-[var(--ui-subtle)] outline-none focus:border-[var(--ui-brand)] focus:bg-[var(--ui-surface)] transition-all shadow-xs"
             />
             
-            <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
+            <div className="absolute right-1.5 top-1 flex items-center gap-1">
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="p-1 text-[var(--ui-subtle)] hover:text-[var(--ui-text)] rounded transition-colors"
+                  className="p-1.5 text-[var(--ui-subtle)] hover:text-[var(--ui-text)] rounded transition-colors cursor-pointer"
                   title="Limpiar búsqueda"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setCameraTarget('search')}
+                aria-label="Escanear código de barras para buscar"
+                title="Escanear código con cámara (Celular / Tablet)"
+                className="p-1.5 text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 hover:bg-[var(--ui-brand)]/20 rounded-md transition-colors cursor-pointer"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
               
               {/* 3 Horizontal Lines Button */}
               <button
@@ -1306,15 +1319,27 @@ export const InventoryScreen: React.FC = () => {
                   <Barcode className="w-3.5 h-3.5" />
                   <span>Código de Barras (EAN-13 / Barra física)</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="Escanea o escribe el código de barras..."
-                  value={editBarcode}
-                  onChange={(e) => setEditBarcode(e.target.value)}
-                  className="w-full px-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-brand)]/50 focus:border-[var(--ui-brand)] rounded-lg font-mono font-bold text-sm text-[var(--ui-brand-strong)] outline-none focus:ring-2 focus:ring-[var(--ui-brand)]/20"
-                />
+                <div className="flex items-stretch gap-2">
+                  <input
+                    type="text"
+                    placeholder="Escanea o escribe el código de barras..."
+                    value={editBarcode}
+                    onChange={(e) => setEditBarcode(e.target.value)}
+                    className="flex-1 min-w-0 px-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-brand)]/50 focus:border-[var(--ui-brand)] rounded-lg font-mono font-bold text-sm text-[var(--ui-brand-strong)] outline-none focus:ring-2 focus:ring-[var(--ui-brand)]/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCameraTarget('edit')}
+                    aria-label="Escanear código de barras con cámara"
+                    title="Escanear código con cámara"
+                    className="px-3 py-2 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 shrink-0" />
+                    <span>Cámara</span>
+                  </button>
+                </div>
                 <p className="text-[10px] text-[var(--ui-muted)] mt-0.5">
-                  Este código permite vender el producto inmediatamente con la pistola lectora.
+                  Este código permite vender el producto inmediatamente con la pistola lectora o cámara.
                 </p>
               </div>
 
@@ -1418,6 +1443,31 @@ export const InventoryScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      <BarcodeCameraModal
+        isOpen={cameraTarget !== null}
+        onClose={() => setCameraTarget(null)}
+        onDetected={(scanned) => {
+          if (cameraTarget === 'edit') {
+            setEditBarcode(scanned);
+            showToast(`Código asignado: ${scanned}`);
+          } else {
+            setSearchQuery(scanned);
+            showToast(`Buscando código: ${scanned}`);
+          }
+          setCameraTarget(null);
+        }}
+        title={
+          cameraTarget === 'edit'
+            ? 'Asignar Código de Barras con Cámara'
+            : 'Buscar Producto por Código'
+        }
+        subtitle={
+          cameraTarget === 'edit'
+            ? 'Escanea el código del producto para guardarlo en su ficha'
+            : 'Apunta la cámara al producto para localizarlo en el inventario'
+        }
+      />
     </div>
   );
 };
