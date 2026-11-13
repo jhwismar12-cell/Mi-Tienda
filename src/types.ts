@@ -13,7 +13,7 @@ export const STORE_CATEGORIES = [
   'Frutas y Verduras',
 ] as const;
 
-export type Category = (typeof STORE_CATEGORIES)[number];
+export type Category = (typeof STORE_CATEGORIES)[number] | (string & {});
 
 export type OrderStatus = 'PENDIENTE' | 'RECIBIDO' | 'CANCELADO';
 

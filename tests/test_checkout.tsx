@@ -9,6 +9,10 @@ import { ReceptionScreen } from '../src/components/inventory/ReceptionScreen';
 import { NewProductModal } from '../src/components/modals/NewProductModal';
 import { AltaAlVueloModal } from '../src/components/modals/AltaAlVueloModal';
 import { BulkSaleModal } from '../src/components/pos/BulkSaleModal';
+import {
+  formatPromoDescription,
+  isBulkEligibleProduct
+} from '../src/components/pos/BulkProductCreateForm';
 import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
 import { PosScreen } from '../src/components/pos/PosScreen';
 import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
@@ -781,4 +785,149 @@ test('BarcodeCameraModal discards late photo decodes after close and TopHeader s
     (globalThis as any).Image = prevImage;
     (globalThis as any).window.BarcodeDetector = prevDetector;
   }
+});
+
+test('formatPromoDescription and isBulkEligibleProduct handle combos and unbarcoded rules', () => {
+  assert.equal(formatPromoDescription('5', '1.00'), 'Promo: 5 x $1.00');
+  assert.equal(formatPromoDescription('6', '1', 'Grande'), 'Promo: 6 x $1.00 — Grande');
+  assert.equal(formatPromoDescription('', '', '  Suelto '), 'Suelto');
+  assert.equal(formatPromoDescription('', ''), undefined);
+
+  assert.equal(
+    isBulkEligibleProduct({ unit: 'UNIDAD', allowFraction: false, category: 'Varios', description: 'Promo: 5 x $1.00' }),
+    true
+  );
+  assert.equal(
+    isBulkEligibleProduct({ unit: 'LIBRA', allowFraction: false, category: 'Varios', description: undefined }),
+    true
+  );
+  assert.equal(
+    isBulkEligibleProduct({ unit: 'UNIDAD', allowFraction: false, category: 'Varios', description: undefined }),
+    false
+  );
+});
+
+test('BulkSaleModal creates bulk/combo products in-modal using store backend categories and selects them immediately', async (t) => {
+  let createdPayload: any = null;
+  t.mock.method(api, 'getCategorias', async () => [
+    { id_categoria: 10, nombre: 'Papelería y Cartulinas' },
+    { id_categoria: 11, nombre: 'Varios y Escolar' }
+  ]);
+  t.mock.method(api, 'crearProducto', async (payload: any) => {
+    createdPayload = payload;
+    return {
+      id_producto: 99,
+      id_categoria: payload.id_categoria,
+      categoria_nombre: 'Papelería y Cartulinas',
+      codigo_interno: payload.codigo_interno,
+      nombre: payload.nombre,
+      descripcion: payload.descripcion,
+      unidad_medida: payload.unidad_medida,
+      precio_compra_actual: payload.precio_compra_actual,
+      precio_venta_actual: payload.precio_venta_actual,
+      margen_minimo_porcentaje: 20,
+      stock_minimo: 5,
+      stock_actual: payload.stock_actual,
+      permite_fraccion: payload.permite_fraccion,
+      activo: true,
+      codigos_barras: []
+    } as BackendProduct;
+  });
+
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <Probe />
+        <BulkSaleModal isOpen={true} onClose={() => {}} />
+      </StoreProvider>
+    );
+  });
+
+  // Open in-modal creation form from header button
+  const newBulkBtn = renderer.root.findByProps({ title: 'Crear producto a granel, combo o sin código' });
+  await act(async () => {
+    newBulkBtn.props.onClick();
+  });
+
+  // Verify backend categories loaded into select dropdown
+  const select = renderer.root.findByType('select');
+  const optionValues = select.findAllByType('option').map((o) => o.props.value);
+  assert.ok(optionValues.includes('Papelería y Cartulinas'));
+  assert.ok(optionValues.includes('Varios y Escolar'));
+
+  const nameInput = renderer.root.findByProps({ placeholder: 'Ej: Arroz Conejo, Huevo, Cartulina A4...' });
+  const comboQtyInput = renderer.root.findByProps({ placeholder: 'Ej: 6' });
+  const comboTotalInput = renderer.root.findByProps({ placeholder: 'Ej: 1.00' });
+  const numberInputs = renderer.root.findAllByType('input').filter((i) => i.props.type === 'number');
+  // numberInputs order: salePrice, costPrice, stock, comboQty, comboTotal
+  const salePriceInput = numberInputs[0];
+  const stockInput = numberInputs[2];
+
+  await act(async () => {
+    nameInput.props.onChange({ target: { value: 'Cartulina A4' } });
+    select.props.onChange({ target: { value: 'Papelería y Cartulinas' } });
+    salePriceInput.props.onChange({ target: { value: '0.25' } });
+    stockInput.props.onChange({ target: { value: '40' } });
+    comboQtyInput.props.onChange({ target: { value: '5' } });
+    comboTotalInput.props.onChange({ target: { value: '1.00' } });
+  });
+
+  const form = renderer.root.findByType('form');
+  await act(async () => {
+    await form.props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(createdPayload.id_categoria, 10);
+  assert.equal(createdPayload.nombre, 'Cartulina A4');
+  assert.equal(createdPayload.descripcion, 'Promo: 5 x $1.00');
+  assert.deepEqual(createdPayload.codigos_barras, []);
+  assert.equal(createdPayload.precio_venta_actual, 0.25);
+
+  // Returns immediately to sale screen with promo button active
+  const promoBtn = renderer.root.findAllByType('button').find((b) => {
+    const text = b.findAllByType('span').map((s) => s.children.join('')).join(' ') + b.children.join('');
+    return text.includes('Agregar 5 × $1.00') || text.includes('5 × $1.00');
+  });
+  assert.ok(promoBtn, 'Expected quick promo button "+ Agregar 5 × $1.00" after creation');
+
+  await act(async () => {
+    promoBtn!.props.onClick({ stopPropagation() {} });
+  });
+
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].product.name, 'Cartulina A4');
+  assert.equal(store.cart[0].quantity, 5);
+  assert.equal(store.cart[0].subtotal, 1.0);
+});
+
+test('BulkSaleModal empty search CTA pre-fills the in-modal product name', async (t) => {
+  t.mock.method(api, 'getCategorias', async () => [{ id_categoria: 1, nombre: 'Abarrotes' }]);
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <Probe />
+        <BulkSaleModal isOpen={true} onClose={() => {}} />
+      </StoreProvider>
+    );
+  });
+
+  const searchInput = renderer.root.findByProps({
+    placeholder: 'Buscar arroz, tomate, huevo, maduro, lenteja, limón...'
+  });
+  await act(async () => {
+    searchInput.props.onChange({ target: { value: 'Marcador Borrable' } });
+  });
+
+  const emptyCta = renderer.root.findAllByType('button').find((b) => {
+    const text = b.findAllByType('span').map((s) => s.children.join('')).join(' ');
+    return text.includes('Crear "Marcador Borrable" sin código');
+  });
+  assert.ok(emptyCta, 'Expected empty-state CTA button with searched query');
+
+  await act(async () => {
+    emptyCta!.props.onClick();
+  });
+
+  const nameInput = renderer.root.findByProps({ placeholder: 'Ej: Arroz Conejo, Huevo, Cartulina A4...' });
+  assert.equal(nameInput.props.value, 'Marcador Borrable');
 });

@@ -14,6 +14,7 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { canAutoFocusInput } from '../../utils/responsive';
+import { BulkProductCreateForm, isBulkEligibleProduct } from './BulkProductCreateForm';
 
 export interface ParsedPromo {
   qty: number;
@@ -52,26 +53,23 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   const [mobileStep, setMobileStep] = useState<'list' | 'detail'>('list');
   const [weightInput, setWeightInput] = useState<string>('1');
   const [dollarInput, setDollarInput] = useState<string>('1.00');
+  const [isCreateMode, setIsCreateMode] = useState(false);
+  const [createInitialName, setCreateInitialName] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  const openCreateMode = (prefillName = '') => {
+    setCreateInitialName(prefillName);
+    setIsCreateMode(true);
+  };
 
   const unbarcodedProducts = useMemo(() => {
     return products.filter(p => !p.barcode || p.barcode.trim() === '');
   }, [products]);
 
   const bulkProducts = useMemo(() => {
-    return unbarcodedProducts.filter(p => {
-      const unit = (p.unit || '').toUpperCase();
-      return (
-        Boolean(p.allowFraction) ||
-        unit === 'LIBRA' ||
-        unit === 'KG' ||
-        unit === 'GALON' ||
-        p.category === 'Frutas y Verduras' ||
-        Boolean(parsePromoFromDescription(p.description))
-      );
-    });
+    return unbarcodedProducts.filter(isBulkEligibleProduct);
   }, [unbarcodedProducts]);
 
   const filteredList = useMemo(() => {
@@ -107,6 +105,8 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
     if (!isOpen) return;
     setSearch('');
     setMobileStep('list');
+    setIsCreateMode(false);
+    setCreateInitialName('');
     const t = canAutoFocusInput()
       ? setTimeout(() => searchRef.current?.focus(), 40)
       : undefined;
@@ -224,15 +224,46 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-            title="Cerrar (ESC)"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {!isCreateMode && (
+              <button
+                type="button"
+                onClick={() => openCreateMode()}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--ui-brand)] hover:opacity-90 text-white text-xs font-bold flex items-center gap-1.5 transition-opacity"
+                title="Crear producto a granel, combo o sin código"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Nuevo Granel</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              title="Cerrar (ESC)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
+        {isCreateMode ? (
+          <BulkProductCreateForm
+            initialName={createInitialName}
+            onCancel={() => {
+              setIsCreateMode(false);
+              setCreateInitialName('');
+            }}
+            onCreated={(created) => {
+              setTab(isBulkEligibleProduct(created) ? 'bulk' : 'all_unbarcoded');
+              setSearch('');
+              setSelectedProductId(created.id);
+              setIsCreateMode(false);
+              setCreateInitialName('');
+              setMobileStep('detail');
+            }}
+          />
+        ) : (
+          <>
         {/* Search & Tabs */}
         <div
           className={`p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center shrink-0 ${
@@ -295,7 +326,19 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
               <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center text-[var(--ui-muted)] p-6">
                 <PackageOpen className="w-10 h-10 mb-2 opacity-40" />
                 <p className="font-semibold text-sm text-[var(--ui-text)]">No se encontraron productos sin código</p>
-                <p className="text-xs mt-1">Prueba cambiando de pestaña o buscando otro nombre.</p>
+                <p className="text-xs mt-1">Prueba cambiando de pestaña, buscando otro nombre o créalo aquí mismo.</p>
+                <button
+                  type="button"
+                  onClick={() => openCreateMode(search.trim())}
+                  className="mt-3 px-3.5 py-2 rounded-xl bg-[var(--ui-brand)] hover:opacity-90 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>
+                    {search.trim()
+                      ? `Crear "${search.trim()}" sin código`
+                      : 'Crear producto a granel o sin código'}
+                  </span>
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -582,6 +625,8 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
             )}
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

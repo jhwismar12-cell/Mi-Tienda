@@ -1,11 +1,13 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, X, Package, CheckCircle2, Camera } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { Category, STORE_CATEGORIES } from '../../types';
+import { Category } from '../../types';
+import { useStoreCategories } from '../../utils/categories';
 import { BarcodeCameraModal } from './BarcodeCameraModal';
 
 export const NewProductModal: React.FC = () => {
-  const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct } = useStore();
+  const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct, products } = useStore();
+  const categories = useStoreCategories(isNewProductModalOpen, products);
 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -21,6 +23,12 @@ export const NewProductModal: React.FC = () => {
   const [minStock, setMinStock] = useState('5');
   const [isSaving, setIsSaving] = useState(false);
   const savingProduct = useRef(false);
+
+  useEffect(() => {
+    if (categories.length > 0 && !categories.includes(category)) {
+      setCategory(categories[0] as Category);
+    }
+  }, [categories, category]);
 
   if (!isNewProductModalOpen) return null;
 
@@ -55,8 +63,6 @@ export const NewProductModal: React.FC = () => {
       setIsSaving(false);
     }
   };
-
-  const categories = STORE_CATEGORIES;
 
   return (
     <>
