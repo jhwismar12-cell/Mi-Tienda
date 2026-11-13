@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#149187" />
+      <stop offset="100%" stop-color="#0f5f59" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bg)" />
+  <rect x="2" y="2" width="60" height="60" rx="15" stroke="#b7ded5" stroke-opacity="0.35" stroke-width="2" />
+
+  <!-- Storefront awning -->
+  <path
+    d="M15 17C15 14.7909 16.7909 13 19 13H45C47.2091 13 49 14.7909 49 17L52 25C52 28.3137 49.3137 31 46 31C43.7 31 41.7 29.7 40.7 27.8C39.7 29.7 37.7 31 35.4 31C33.8 31 32.3 30.3 31.3 29.1C30.3 30.3 28.8 31 27.2 31C24.9 31 22.9 29.7 21.9 27.8C20.9 29.7 18.9 31 16.6 31C13.3 31 12 28.3137 12 25L15 17Z"
+    fill="#ffffff"
+  />
+  <!-- Awning accent stripes -->
+  <path d="M23.5 13L21.5 26" stroke="#0f766e" stroke-width="3" stroke-linecap="round" opacity="0.25" />
+  <path d="M32 13V26" stroke="#0f766e" stroke-width="3" stroke-linecap="round" opacity="0.25" />
+  <path d="M40.5 13L42.5 26" stroke="#0f766e" stroke-width="3" stroke-linecap="round" opacity="0.25" />
+
+  <!-- Storefront body -->
+  <path
+    d="M16 33H48V47C48 49.2091 46.2091 51 44 51H20C17.7909 51 16 49.2091 16 47V33Z"
+    fill="#ffffff"
+  />
+  <!-- Door & display window -->
+  <rect x="21" y="38" width="10" height="13" rx="2.5" fill="#152a3f" />
+  <rect x="35" y="37.5" width="9" height="8" rx="2.2" fill="#b7ded5" />
+</svg>
