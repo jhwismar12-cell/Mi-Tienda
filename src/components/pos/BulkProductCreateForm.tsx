@@ -3,6 +3,8 @@ import { ArrowLeft, CheckCircle2, Scale, Tag } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Category, Product } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
+import { useStoreProviders } from '../../utils/providers';
+import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 
 export function formatPromoDescription(
   qtyRaw: string | number,
@@ -55,9 +57,12 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
 }) => {
   const { products, addProduct } = useStore();
   const categories = useStoreCategories(true, products);
+  const { providers, addLocalProvider } = useStoreProviders(true, products);
 
   const [name, setName] = useState(initialName);
   const [category, setCategory] = useState<string>(categories[0] || 'Abarrotes');
+  const [providerId, setProviderId] = useState<number | undefined>(undefined);
+  const [distributor, setDistributor] = useState<string | undefined>(undefined);
   const [unit, setUnit] = useState<'UNIDAD' | 'LIBRA' | 'KG' | 'GALON'>('UNIDAD');
   const [allowFraction, setAllowFraction] = useState(false);
   const [salePrice, setSalePrice] = useState('0.50');
@@ -126,6 +131,8 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
         barcode: undefined,
         name: cleanName,
         category: category as Category,
+        providerId,
+        distributor,
         unit,
         allowFraction,
         description,
@@ -204,6 +211,17 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
             </select>
           </div>
         </div>
+
+        <ProviderSelectorField
+          providers={providers}
+          selectedProviderId={providerId}
+          onSelectProvider={(prov) => {
+            setProviderId(prov?.id);
+            setDistributor(prov?.name);
+          }}
+          onProviderCreated={addLocalProvider}
+          labelClassName="text-xs font-bold text-[var(--ui-secondary)]"
+        />
 
         <div className="space-y-2">
           <label className="block text-xs font-bold text-[var(--ui-secondary)]">

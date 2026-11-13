@@ -66,6 +66,7 @@ beforeEach(async (t) => {
   t.mock.method(api, 'getCajaActiva', async () => shift);
   t.mock.method(api, 'getPedidos', async () => []);
   t.mock.method(api, 'getTrabajadores', async () => []);
+  t.mock.method(api, 'getProveedores', async () => []);
   await act(async () => { renderer = create(<StoreProvider><Probe /></StoreProvider>); });
   await act(async () => { store.addProductToCart(product); store.setCashReceived('3'); });
 });
@@ -245,11 +246,11 @@ test('the new product form stays open and preserves the selected category when s
   });
   await act(async () => {
     renderer.root.findAllByType('input').find(n => n.props.placeholder === 'Ej: Leche Entera 1 Litro')!.props.onChange({ target: { value: 'Jabón' } });
-    renderer.root.findByType('select').props.onChange({ target: { value: 'Hogar' } });
+    renderer.root.findAllByType('select')[0].props.onChange({ target: { value: 'Hogar' } });
   });
   await act(async () => { await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); });
   assert.equal(store.isNewProductModalOpen, true);
-  assert.equal(renderer.root.findByType('select').props.value, 'Hogar');
+  assert.equal(renderer.root.findAllByType('select')[0].props.value, 'Hogar');
   assert.equal(renderer.root.findAllByType('input').find(n => n.props.placeholder === 'Ej: Leche Entera 1 Litro')!.props.value, 'Jabón');
   assert.equal(renderer.root.findAllByType('button').find(n => n.props.type === 'submit')!.props.disabled, false);
   assert.equal(store.products.length, 1);
@@ -266,7 +267,7 @@ test('the new product form waits for saving and prevents repeated submissions', 
   });
   await act(async () => {
     renderer.root.findAllByType('input').find(n => n.props.placeholder === 'Ej: Leche Entera 1 Litro')!.props.onChange({ target: { value: 'Orégano' } });
-    renderer.root.findByType('select').props.onChange({ target: { value: 'Condimentos' } });
+    renderer.root.findAllByType('select')[0].props.onChange({ target: { value: 'Condimentos' } });
   });
   let first!: Promise<void>;
   await act(async () => {
@@ -292,12 +293,12 @@ test('failed quick product creation preserves the form and barcode without addin
   });
   await act(async () => {
     renderer.root.findAllByType('input').find(n => n.props.placeholder === 'Ej: Galletas Oreo 36g')!.props.onChange({ target: { value: 'Jabón' } });
-    renderer.root.findByType('select').props.onChange({ target: { value: 'Hogar' } });
+    renderer.root.findAllByType('select')[0].props.onChange({ target: { value: 'Hogar' } });
   });
   await act(async () => { await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); });
   assert.equal(store.isAltaAlVueloOpen, true);
   assert.equal(store.unknownBarcode, 'NEW-BARCODE');
-  assert.equal(renderer.root.findByType('select').props.value, 'Hogar');
+  assert.equal(renderer.root.findAllByType('select')[0].props.value, 'Hogar');
   assert.equal(store.products.length, 1);
   assert.equal(store.cart.length, 1);
   assert.equal(renderer.root.findAllByType('button').find(n => n.props.type === 'submit')!.props.disabled, false);
@@ -850,7 +851,7 @@ test('BulkSaleModal creates bulk/combo products in-modal using store backend cat
   });
 
   // Verify backend categories loaded into select dropdown
-  const select = renderer.root.findByType('select');
+  const select = renderer.root.findAllByType('select')[0];
   const optionValues = select.findAllByType('option').map((o) => o.props.value);
   assert.ok(optionValues.includes('Papelería y Cartulinas'));
   assert.ok(optionValues.includes('Varios y Escolar'));
@@ -930,4 +931,141 @@ test('BulkSaleModal empty search CTA pre-fills the in-modal product name', async
 
   const nameInput = renderer.root.findByProps({ placeholder: 'Ej: Arroz Conejo, Huevo, Cartulina A4...' });
   assert.equal(nameInput.props.value, 'Marcador Borrable');
+});
+
+test('NewProductModal lists distributors and lets user create and auto-select a new distributor inline', async (t) => {
+  let createdProductPayload: any = null;
+  let createdProviderPayload: any = null;
+
+  t.mock.method(api, 'getCategorias', async () => [{ id_categoria: 1, nombre: 'Abarrotes' }]);
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 3, ruc_ci: '1790001112001', razon_social: 'Arca Continental' }
+  ]);
+  t.mock.method(api, 'crearProveedor', async (payload: any) => {
+    createdProviderPayload = payload;
+    return {
+      id_proveedor: 77,
+      ruc_ci: payload.ruc_ci || 'RUC-77',
+      razon_social: payload.razon_social
+    };
+  });
+  t.mock.method(api, 'crearProducto', async (payload: any) => {
+    createdProductPayload = payload;
+    return {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 201,
+      id_proveedor: payload.id_proveedor,
+      proveedor_nombre: 'Distribuidora Andina',
+      nombre: payload.nombre
+    };
+  });
+
+  await act(async () => {
+    store.setIsNewProductModalOpen(true);
+    renderer.update(<StoreProvider><Probe /><NewProductModal /></StoreProvider>);
+  });
+
+  // Verify existing distributor is listed alongside sentinel "+ Añadir distribuidor nuevo..."
+  const provSelect = renderer.root.findByProps({ 'aria-label': 'Distribuidor' });
+  const provOptions = provSelect.findAllByType('option').map((o) => o.props.value);
+  assert.ok(provOptions.includes('3'));
+  assert.ok(provOptions.includes('__NEW__'));
+
+  // Choosing sentinel opens inline distributor panel
+  await act(async () => {
+    provSelect.props.onChange({ target: { value: '__NEW__' } });
+  });
+
+  const newProvNameInput = renderer.root.findByProps({ 'aria-label': 'Nombre del nuevo distribuidor' });
+  const newProvRucInput = renderer.root.findByProps({ 'aria-label': 'RUC o Cédula del distribuidor' });
+  await act(async () => {
+    newProvNameInput.props.onChange({ target: { value: 'Distribuidora Andina' } });
+    newProvRucInput.props.onChange({ target: { value: '1799998887001' } });
+  });
+
+  const saveProvBtn = renderer.root.findAllByType('button').find((b) =>
+    b.findAllByType('span').some((s) => s.children.join('') === 'Guardar Distribuidor')
+  );
+  assert.ok(saveProvBtn, 'Expected Guardar Distribuidor button');
+  await act(async () => {
+    await saveProvBtn!.props.onClick();
+  });
+
+  assert.equal(createdProviderPayload.razon_social, 'Distribuidora Andina');
+  assert.equal(createdProviderPayload.ruc_ci, '1799998887001');
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Distribuidor' }).props.value, '77');
+
+  // Now submit the new product and verify id_proveedor and distributor are saved
+  const nameInput = renderer.root.findByProps({ placeholder: 'Ej: Leche Entera 1 Litro' });
+  await act(async () => {
+    nameInput.props.onChange({ target: { value: 'Aceite Girasol 1L' } });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(createdProductPayload.id_proveedor, 77);
+  const saved = store.products.find((p) => p.id === '201');
+  assert.equal(saved?.providerId, 77);
+  assert.equal(saved?.distributor, 'Distribuidora Andina');
+});
+
+test('AltaAlVueloModal and BulkSaleModal list distributors and forward selected or created id_proveedor', async (t) => {
+  const createdPayloads: any[] = [];
+  t.mock.method(api, 'getCategorias', async () => [{ id_categoria: 10, nombre: 'Varios y Escolar' }]);
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 5, ruc_ci: '0990005551001', razon_social: 'Papelera Nacional' }
+  ]);
+  t.mock.method(api, 'crearProducto', async (payload: any) => {
+    createdPayloads.push(payload);
+    return {
+      ...createdProduct('Varios y Escolar', 10),
+      id_producto: 300 + createdPayloads.length,
+      id_proveedor: payload.id_proveedor,
+      proveedor_nombre: payload.id_proveedor === 5 ? 'Papelera Nacional' : undefined,
+      nombre: payload.nombre,
+      codigos_barras: payload.codigos_barras || []
+    };
+  });
+
+  // 1. BulkSaleModal -> New Bulk -> Select existing distributor 5
+  await act(async () => {
+    renderer = create(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+  await act(async () => {
+    renderer.root.findByProps({ title: 'Crear producto a granel, combo o sin código' }).props.onClick();
+  });
+
+  const bulkProvSelect = renderer.root.findByProps({ 'aria-label': 'Distribuidor' });
+  await act(async () => {
+    bulkProvSelect.props.onChange({ target: { value: '5' } });
+    renderer.root.findByProps({ placeholder: 'Ej: Arroz Conejo, Huevo, Cartulina A4...' }).props.onChange({
+      target: { value: 'Papel Bond Resma' }
+    });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+  assert.equal(createdPayloads[0].id_proveedor, 5);
+
+  // 2. AltaAlVueloModal -> uses backend category & sends selected distributor
+  await act(async () => {
+    store.setUnknownBarcode('7860000111222');
+    store.setIsAltaAlVueloOpen(true);
+    renderer.update(<StoreProvider><Probe /><AltaAlVueloModal /></StoreProvider>);
+  });
+  const altaCatSelect = renderer.root.findAllByType('select')[0];
+  assert.ok(altaCatSelect.findAllByType('option').some((o) => o.props.value === 'Varios y Escolar'));
+  await act(async () => {
+    altaCatSelect.props.onChange({ target: { value: 'Varios y Escolar' } });
+    renderer.root.findByProps({ 'aria-label': 'Distribuidor' }).props.onChange({ target: { value: '5' } });
+    renderer.root.findByProps({ placeholder: 'Ej: Galletas Oreo 36g' }).props.onChange({
+      target: { value: 'Cuaderno 100 Hojas' }
+    });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+  assert.equal(createdPayloads[1].id_proveedor, 5);
+  assert.equal(store.cart[0].product.distributor, 'Papelera Nacional');
 });

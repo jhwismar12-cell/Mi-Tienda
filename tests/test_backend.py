@@ -808,6 +808,38 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertEqual(upd_res.status_code, 200)
         self.assertEqual(upd_res.json()["descripcion"], "Promo: 6 x $1.00 | Cartón $4.20")
 
+    def test_21_crear_proveedor_y_producto_con_distribuidor(self):
+        # Reject blank name cleanly
+        bad_res = self.client.post("/api/proveedores", json={"ruc_ci": "", "razon_social": "   "})
+        self.assertEqual(bad_res.status_code, 400)
+
+        # Create provider with optional empty ruc_ci
+        prov_res = self.client.post("/api/proveedores", json={
+            "ruc_ci": "",
+            "razon_social": "Distribuidora Escolar Prueba",
+            "telefono": "0991234567"
+        })
+        self.assertEqual(prov_res.status_code, 200)
+        prov = prov_res.json()
+        self.assertEqual(prov["razon_social"], "Distribuidora Escolar Prueba")
+        self.assertTrue(prov["ruc_ci"].startswith("RUC-"))
+
+        # Create product linked to new provider and confirm proveedor_nombre comes back
+        prod_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": prov["id_proveedor"],
+            "codigo_interno": "DIST-TEST-01",
+            "nombre": "Borrador Blanco",
+            "precio_compra_actual": 0.15,
+            "precio_venta_actual": 0.30,
+            "stock_inicial": 20,
+            "codigos_barras": []
+        })
+        self.assertEqual(prod_res.status_code, 200)
+        created = prod_res.json()
+        self.assertEqual(created["id_proveedor"], prov["id_proveedor"])
+        self.assertEqual(created["proveedor_nombre"], "Distribuidora Escolar Prueba")
+
 if __name__ == "__main__":
     unittest.main()
 

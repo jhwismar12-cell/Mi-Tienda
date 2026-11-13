@@ -220,10 +220,18 @@ def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
         cursor.execute("SELECT Nombre FROM CATEGORIAS WHERE IDCategoria = ?", (data.id_categoria,))
         cat_name = cursor.fetchone()["Nombre"]
 
+        prov_name = None
+        if data.id_proveedor is not None:
+            cursor.execute("SELECT RazonSocial FROM PROVEEDORES WHERE IDProveedor = ?", (data.id_proveedor,))
+            prov_row = cursor.fetchone()
+            prov_name = prov_row["RazonSocial"] if prov_row else None
+
         return ProductoOut(
             id_producto=pid,
             id_categoria=data.id_categoria,
             categoria_nombre=cat_name,
+            id_proveedor=data.id_proveedor,
+            proveedor_nombre=prov_name,
             codigo_interno=codigo_interno,
             nombre=data.nombre,
             descripcion=data.descripcion,

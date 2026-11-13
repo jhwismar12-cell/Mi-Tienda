@@ -590,19 +590,27 @@ def listar_proveedores():
 
 @app.post("/api/proveedores", response_model=ProveedorOut, tags=["Auxiliares"])
 def crear_proveedor(data: ProveedorCreate):
+    clean_name = (data.razon_social or "").strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="El nombre del distribuidor es obligatorio.")
     with get_db() as conn:
         cursor = conn.cursor()
-        ruc = data.ruc_ci.strip() if data.ruc_ci else f"RUC-{int(datetime.now().timestamp())}"
-        cursor.execute(
-            """INSERT INTO PROVEEDORES (RUC_CI, RazonSocial, Telefono, Email, Direccion, Observaciones, Activo)
-               VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            (ruc, data.razon_social.strip(), data.telefono, data.email, data.direccion, data.observaciones)
-        )
+        ruc = (data.ruc_ci or "").strip() or f"RUC-{int(datetime.now().timestamp() * 1000)}"
+        try:
+            cursor.execute(
+                """INSERT INTO PROVEEDORES (RUC_CI, RazonSocial, Telefono, Email, Direccion, Observaciones, Activo)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                (ruc, clean_name, data.telefono, data.email, data.direccion, data.observaciones)
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e).upper():
+                raise HTTPException(status_code=400, detail="Ya existe un distribuidor con ese RUC o cédula.")
+            raise HTTPException(status_code=400, detail=str(e))
         pid = cursor.lastrowid
         return ProveedorOut(
             id_proveedor=pid,
             ruc_ci=ruc,
-            razon_social=data.razon_social.strip(),
+            razon_social=clean_name,
             telefono=data.telefono,
             email=data.email,
             direccion=data.direccion,

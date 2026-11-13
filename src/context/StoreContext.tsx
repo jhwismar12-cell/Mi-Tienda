@@ -130,7 +130,15 @@ export interface StoreContextType {
   setIsAltaAlVueloOpen: (open: boolean) => void;
   unknownBarcode: string;
   setUnknownBarcode: (code: string) => void;
-  handleSaveAltaAlVuelo: (data: { name: string; category: any; costPrice: number; salePrice: number; initialStock?: number }) => Promise<void>;
+  handleSaveAltaAlVuelo: (data: {
+    name: string;
+    category: any;
+    costPrice: number;
+    salePrice: number;
+    initialStock?: number;
+    providerId?: number;
+    distributor?: string;
+  }) => Promise<void>;
 
   isNewProductModalOpen: boolean;
   setIsNewProductModalOpen: (open: boolean) => void;
@@ -777,6 +785,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     costPrice: number;
     salePrice: number;
     initialStock?: number;
+    providerId?: number;
+    distributor?: string;
   }) => {
     const code = unknownBarcode || `AUT-${Date.now()}`;
     const newProd = await addProduct({
@@ -784,6 +794,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       barcode: unknownBarcode,
       name: data.name,
       category: data.category,
+      providerId: data.providerId,
+      distributor: data.distributor,
       costPrice: data.costPrice,
       salePrice: data.salePrice,
       stock: data.initialStock || 0,
@@ -915,6 +927,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         codigos_barras: prodData.barcode ? [prodData.barcode] : []
       });
       const mapped = mapBackendProduct(created);
+      if (!mapped.distributor && prodData.distributor) {
+        mapped.distributor = prodData.distributor;
+      }
+      if (mapped.providerId === undefined && prodData.providerId !== undefined) {
+        mapped.providerId = prodData.providerId;
+      }
       setProducts(prev => [mapped, ...prev]);
       refreshKardex();
       showToast(`Producto "${mapped.name}" creado`);

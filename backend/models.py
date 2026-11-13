@@ -65,7 +65,7 @@ class ProveedorOut(BaseModel):
     activo: bool = True
 
 class ProveedorCreate(BaseModel):
-    ruc_ci: str
+    ruc_ci: Optional[str] = ""
     razon_social: str
     telefono: Optional[str] = None
     email: Optional[str] = None

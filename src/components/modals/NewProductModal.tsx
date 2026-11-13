@@ -3,17 +3,22 @@ import { Plus, X, Package, CheckCircle2, Camera } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Category } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
+import { useStoreProviders } from '../../utils/providers';
 import { BarcodeCameraModal } from './BarcodeCameraModal';
+import { ProviderSelectorField } from './ProviderSelectorField';
 
 export const NewProductModal: React.FC = () => {
   const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct, products } = useStore();
   const categories = useStoreCategories(isNewProductModalOpen, products);
+  const { providers, addLocalProvider } = useStoreProviders(isNewProductModalOpen, products);
 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [barcode, setBarcode] = useState('');
   const [isBarcodeCameraOpen, setIsBarcodeCameraOpen] = useState(false);
   const [category, setCategory] = useState<Category>('Abarrotes');
+  const [providerId, setProviderId] = useState<number | undefined>(undefined);
+  const [distributor, setDistributor] = useState<string | undefined>(undefined);
   const [unit, setUnit] = useState('UNIDAD');
   const [allowFraction, setAllowFraction] = useState(false);
   const [description, setDescription] = useState('');
@@ -46,6 +51,8 @@ export const NewProductModal: React.FC = () => {
         barcode: barcode.trim() || undefined,
         name: name.trim(),
         category,
+        providerId,
+        distributor,
         unit,
         allowFraction,
         description: description.trim() || undefined,
@@ -55,6 +62,8 @@ export const NewProductModal: React.FC = () => {
         minStock: parseFloat(minStock) || 5,
         lastUpdated: new Date().toISOString()
       });
+      setProviderId(undefined);
+      setDistributor(undefined);
       setIsNewProductModalOpen(false);
     } catch {
       // The store shows the error; preserve the form for correction and retry.
@@ -67,9 +76,9 @@ export const NewProductModal: React.FC = () => {
   return (
     <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
+      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-lg w-full max-h-[92vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-[var(--ui-chrome)] px-6 py-4 flex items-center justify-between text-white border-b border-[var(--ui-border-strong)]">
+        <div className="bg-[var(--ui-chrome)] px-6 py-4 flex items-center justify-between text-white border-b border-[var(--ui-border-strong)] shrink-0">
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-[var(--ui-mint)]" />
             <h2 className="font-bold text-base md:text-lg text-white">
@@ -85,7 +94,7 @@ export const NewProductModal: React.FC = () => {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs md:text-sm">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs md:text-sm overflow-y-auto flex-1 min-h-0">
           <div>
             <label className="block font-bold text-[var(--ui-text)] mb-1">
               Nombre del Producto <span className="text-[var(--ui-danger-text)]">*</span>
@@ -153,6 +162,16 @@ export const NewProductModal: React.FC = () => {
               ))}
             </select>
           </div>
+
+          <ProviderSelectorField
+            providers={providers}
+            selectedProviderId={providerId}
+            onSelectProvider={(prov) => {
+              setProviderId(prov?.id);
+              setDistributor(prov?.name);
+            }}
+            onProviderCreated={addLocalProvider}
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div>

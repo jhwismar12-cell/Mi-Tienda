@@ -7,18 +7,26 @@ import {
   X
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { Category, STORE_CATEGORIES } from '../../types';
+import { Category } from '../../types';
+import { useStoreCategories } from '../../utils/categories';
+import { useStoreProviders } from '../../utils/providers';
+import { ProviderSelectorField } from './ProviderSelectorField';
 
 export const AltaAlVueloModal: React.FC = () => {
   const {
+    products,
     isAltaAlVueloOpen,
     setIsAltaAlVueloOpen,
     unknownBarcode,
     handleSaveAltaAlVuelo
   } = useStore();
+  const categories = useStoreCategories(isAltaAlVueloOpen, products);
+  const { providers, addLocalProvider } = useStoreProviders(isAltaAlVueloOpen, products);
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState<Category>('Abarrotes');
+  const [providerId, setProviderId] = useState<number | undefined>(undefined);
+  const [distributor, setDistributor] = useState<string | undefined>(undefined);
   const [costPrice, setCostPrice] = useState<string>('0.50');
   const [salePrice, setSalePrice] = useState<string>('0.75');
   const [initialStock, setInitialStock] = useState<string>('10');
@@ -31,6 +39,8 @@ export const AltaAlVueloModal: React.FC = () => {
   useEffect(() => {
     if (isAltaAlVueloOpen) {
       setName('');
+      setProviderId(undefined);
+      setDistributor(undefined);
       setCostPrice('0.50');
       setSalePrice('0.75');
       setInitialStock('10');
@@ -39,6 +49,12 @@ export const AltaAlVueloModal: React.FC = () => {
       }, 50);
     }
   }, [isAltaAlVueloOpen]);
+
+  useEffect(() => {
+    if (categories.length > 0 && !categories.includes(category)) {
+      setCategory(categories[0] as Category);
+    }
+  }, [categories, category]);
 
   // Handle Enter/ESC key listeners
   useEffect(() => {
@@ -71,6 +87,8 @@ export const AltaAlVueloModal: React.FC = () => {
       await handleSaveAltaAlVuelo({
         name: name.trim(),
         category,
+        providerId,
+        distributor,
         costPrice: costNum,
         salePrice: saleNum,
         initialStock: parseInt(initialStock) || 10
@@ -83,13 +101,11 @@ export const AltaAlVueloModal: React.FC = () => {
     }
   };
 
-  const categories = STORE_CATEGORIES;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
+      <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-lg w-full max-h-[92vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-[var(--ui-chrome)] px-6 py-4 flex items-center justify-between text-white border-b border-[var(--ui-border-strong)]">
+        <div className="bg-[var(--ui-chrome)] px-6 py-4 flex items-center justify-between text-white border-b border-[var(--ui-border-strong)] shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-[var(--ui-brand)] flex items-center justify-center text-[var(--ui-mint)] font-bold">
               <Zap className="w-4 h-4 fill-current" />
@@ -114,7 +130,7 @@ export const AltaAlVueloModal: React.FC = () => {
         </div>
 
         {/* Warning Notification Box */}
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div className="bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] p-3.5 rounded-xl flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-[var(--ui-warning-text)] shrink-0 mt-0.5" />
             <div className="text-xs md:text-sm text-[var(--ui-warning-text)]">
@@ -157,6 +173,18 @@ export const AltaAlVueloModal: React.FC = () => {
                 ))}
               </select>
             </div>
+
+            {/* Distributor */}
+            <ProviderSelectorField
+              providers={providers}
+              selectedProviderId={providerId}
+              onSelectProvider={(prov) => {
+                setProviderId(prov?.id);
+                setDistributor(prov?.name);
+              }}
+              onProviderCreated={addLocalProvider}
+              labelClassName="text-xs font-bold text-[var(--ui-text)]"
+            />
 
             {/* Cost & Sale Price Grid */}
             <div className="grid grid-cols-2 gap-3.5 pt-1">
