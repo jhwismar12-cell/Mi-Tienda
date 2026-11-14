@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Store, Lock, User, KeyRound, ShieldAlert, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
+import { PasswordInput } from '../common/PasswordInput';
 
 export const LoginScreen: React.FC = () => {
   const { loginUser } = useStore();
@@ -72,9 +73,8 @@ export const LoginScreen: React.FC = () => {
               Contraseña
             </label>
             <div className="relative">
-              <Lock className="w-4 h-4 text-[var(--ui-muted)] absolute left-3.5 top-3" />
-              <input
-                type="password"
+              <Lock className="w-4 h-4 text-[var(--ui-muted)] absolute left-3.5 top-3 z-10 pointer-events-none" />
+              <PasswordInput
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -157,8 +157,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
             <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
               Contraseña actual
             </label>
-            <input
-              type="password"
+            <PasswordInput
               required
               value={currentPwd}
               onChange={(e) => setCurrentPwd(e.target.value)}
@@ -171,8 +170,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
             <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
               Nueva contraseña (mín. 8 caracteres)
             </label>
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={8}
               value={newPwd}
@@ -186,8 +184,7 @@ export const ForcePasswordChangeModal: React.FC = () => {
             <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
               Confirmar nueva contraseña
             </label>
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={8}
               value={confirmPwd}

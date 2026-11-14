@@ -20,6 +20,7 @@ import { BarcodeCameraModal, createBarcodeReader } from '../src/components/modal
 import { InventoryScreen } from '../src/components/inventory/InventoryScreen';
 import { Sidebar, MobileBottomNav } from '../src/components/Sidebar';
 import { TopHeader } from '../src/components/TopHeader';
+import { LoginScreen } from '../src/components/auth/LoginScreen';
 import { canAutoFocusInput } from '../src/utils/responsive';
 
 const product: Product = { id: '1', code: 'INTERNAL', barcode: 'BARCODE', name: 'Producto', category: 'Bebidas', costPrice: 2, salePrice: 3, stock: 10, minStock: 1 };
@@ -1157,4 +1158,36 @@ test('InventoryScreen edit product modal allows renaming product, switching or c
   assert.equal(updatePayloads[1].id_proveedor, null);
   assert.equal(store.products[0].providerId, undefined);
   assert.equal(store.products[0].distributor, undefined);
+});
+
+test('LoginScreen toggles password visibility with eye button without submitting', async (t) => {
+  const loginSpy = t.mock.method(api, 'login', async () => ({
+    token: 'tok',
+    usuario: { id_usuario: 1, username: 'admin', nombre_completo: 'Admin', rol: 'ADMINISTRADOR', debe_cambiar_clave: false }
+  }));
+
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><LoginScreen /></StoreProvider>);
+  });
+
+  const findPwdInput = () =>
+    renderer.root.findAllByType('input').find((i) => i.props.autoComplete === 'current-password')!;
+
+  assert.equal(findPwdInput().props.type, 'password');
+
+  const showBtn = renderer.root.findByProps({ 'aria-label': 'Mostrar clave' });
+  assert.equal(showBtn.props.type, 'button');
+  await act(async () => {
+    showBtn.props.onClick();
+  });
+
+  assert.equal(findPwdInput().props.type, 'text');
+  assert.equal(loginSpy.mock.callCount(), 0);
+
+  const hideBtn = renderer.root.findByProps({ 'aria-label': 'Ocultar clave' });
+  await act(async () => {
+    hideBtn.props.onClick();
+  });
+
+  assert.equal(findPwdInput().props.type, 'password');
 });

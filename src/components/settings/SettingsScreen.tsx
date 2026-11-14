@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { api } from '../../services/api';
+import { PasswordInput } from '../common/PasswordInput';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -406,8 +407,7 @@ export const SettingsScreen: React.FC = () => {
                   <label className="block text-xs font-semibold text-[var(--ui-secondary)] mb-1">
                     Contraseña (mín. 8 caract.)
                   </label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={newWorkerPassword}
                     onChange={(e) => setNewWorkerPassword(e.target.value)}
                     placeholder="Vacío = solo turno sin login"
@@ -567,12 +567,12 @@ export const SettingsScreen: React.FC = () => {
 
                     {isEditingPwd && (
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-[var(--ui-border)]">
-                        <input
-                          type="password"
+                        <PasswordInput
+                          wrapperClassName="flex-1"
                           value={workerNewPassword}
                           onChange={(e) => setWorkerNewPassword(e.target.value)}
                           placeholder={`Nueva contraseña para @${w.username} (mín. 8 caracteres)`}
-                          className="flex-1 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg px-3 py-1.5 text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
+                          className="w-full bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg px-3 py-1.5 text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
                         />
                         <div className="flex items-center gap-2">
                           <button
@@ -627,8 +627,7 @@ export const SettingsScreen: React.FC = () => {
                 <label className="block text-xs font-semibold text-[var(--ui-secondary)] mb-1">
                   Contraseña actual
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={myCurrentPwd}
                   onChange={(e) => setMyCurrentPwd(e.target.value)}
                   placeholder="Contraseña actual"
@@ -639,8 +638,7 @@ export const SettingsScreen: React.FC = () => {
                 <label className="block text-xs font-semibold text-[var(--ui-secondary)] mb-1">
                   Nueva contraseña (mín. 8 caract.)
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={myNewPwd}
                   onChange={(e) => setMyNewPwd(e.target.value)}
                   placeholder="Nueva contraseña segura"
@@ -697,9 +695,9 @@ export const SettingsScreen: React.FC = () => {
                 </label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <Key className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5" />
-                    <input
-                      type="password"
+                    <Key className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5 z-10 pointer-events-none" />
+                    <PasswordInput
+                      wrapperClassName="w-full"
                       value={geminiApiKey}
                       onChange={(e) => setGeminiApiKey(e.target.value)}
                       placeholder="Pega aquí tu API Key de Gemini (ej: AIzaSy...)"
