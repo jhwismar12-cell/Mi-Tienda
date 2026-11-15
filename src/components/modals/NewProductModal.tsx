@@ -4,6 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Category } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
 import { useStoreProviders } from '../../utils/providers';
+import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { BarcodeCameraModal } from './BarcodeCameraModal';
 import { ProviderSelectorField } from './ProviderSelectorField';
 
@@ -93,8 +94,8 @@ export const NewProductModal: React.FC = () => {
         unit,
         allowFraction,
         description: description.trim() || undefined,
-        costPrice: parseFloat(costPrice) || 0,
-        salePrice: parseFloat(salePrice) || 0,
+        costPrice: roundCostPrice(parseDecimalInput(costPrice)),
+        salePrice: parseDecimalInput(salePrice),
         stock: parseFloat(stock) || 0,
         minStock: parseFloat(minStock) || 5,
         lastUpdated: new Date().toISOString()
@@ -229,8 +230,9 @@ export const NewProductModal: React.FC = () => {
               </label>
               <input
                 type="number"
-                step="0.01"
+                step="0.0001"
                 min="0"
+                aria-label="Precio de Costo ($)"
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
                 className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono font-bold"

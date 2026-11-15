@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { ReceptionDraftItem, PurchaseOrder } from '../../types';
+import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { api, AIProcessedInvoice } from '../../services/api';
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 
@@ -779,12 +780,13 @@ export const ReceptionScreen: React.FC = () => {
                         <div className="flex items-center justify-end gap-1">
                           <input
                             type="number"
-                            step="0.01"
+                            step="0.0001"
                             min="0"
+                            aria-label={`Costo unitario de ${item.name}`}
                             value={item.unitCost}
                             onChange={(e) =>
                               handleUpdateItem(item.id, {
-                                unitCost: Math.max(0, parseFloat(e.target.value) || 0)
+                                unitCost: roundCostPrice(parseDecimalInput(e.target.value))
                               })
                             }
                             className={`w-20 px-2 py-1 bg-[var(--ui-surface-muted)] border rounded font-mono font-semibold text-right outline-none ${

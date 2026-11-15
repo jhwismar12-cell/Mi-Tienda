@@ -1046,6 +1046,50 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertNotIn(p_hist, prod_ids_final)
         self.assertNotIn(p_fresh, prod_ids_final)
 
+    def test_23_costos_cuatro_decimales_en_productos_y_compras(self):
+        # 1. Create product with 4-decimal cost ($1.3043) -> stored and returned intact
+        prod_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": 1,
+            "codigo_interno": "DEC4-001",
+            "nombre": "Producto Cuatro Decimales",
+            "precio_compra_actual": 1.3043,
+            "precio_venta_actual": 2.00,
+            "stock_inicial": 0,
+            "stock_minimo": 2,
+            "codigos_barras": ["7941660072551"]
+        })
+        self.assertEqual(prod_res.status_code, 200)
+        pid = prod_res.json()["id_producto"]
+        self.assertAlmostEqual(prod_res.json()["precio_compra_actual"], 1.3043, places=4)
+
+        # 2. Update cost via PUT to another 4-decimal cost ($0.4348)
+        upd_res = self.client.put(f"/api/productos/{pid}", json={"precio_compra_actual": 0.4348})
+        self.assertEqual(upd_res.status_code, 200)
+        self.assertAlmostEqual(upd_res.json()["precio_compra_actual"], 0.4348, places=4)
+
+        # 3. Purchase 20 units at $1.3043 -> subtotal preserves 26.086 and total reflects $26.09 weight
+        buy_res = self.client.post("/api/compras/registrar", json={
+            "id_proveedor": 1,
+            "numero_documento": "FAC-DEC4-20",
+            "items": [{
+                "id_producto": pid,
+                "codigo": "DEC4-001",
+                "nombre": "Producto Cuatro Decimales",
+                "cantidad": 20,
+                "costo_unitario": 1.3043,
+                "precio_venta_sugerido": 2.00
+            }]
+        })
+        self.assertEqual(buy_res.status_code, 200)
+        compra = buy_res.json()
+        self.assertAlmostEqual(compra["total"], 26.09, places=2)
+        self.assertAlmostEqual(compra["items"][0]["costo_unitario"], 1.3043, places=4)
+        self.assertAlmostEqual(compra["items"][0]["subtotal"], 26.086, places=3)
+
+        all_after = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
+        self.assertAlmostEqual(all_after[pid]["precio_compra_actual"], 1.3043, places=4)
+
 if __name__ == "__main__":
     unittest.main()
 

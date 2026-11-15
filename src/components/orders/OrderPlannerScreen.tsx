@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product, PurchaseOrder, PurchaseOrderItem } from '../../types';
+import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
 
 export const OrderPlannerScreen: React.FC = () => {
   const {
@@ -434,7 +435,7 @@ export const OrderPlannerScreen: React.FC = () => {
                           <div className="overflow-hidden pr-2">
                             <div className="font-semibold text-[var(--ui-text)] truncate">{item.name}</div>
                             <div className="font-mono text-[10px] text-[var(--ui-muted)]">
-                              Cód: {item.code} • Costo Ref: ${item.estimatedCost.toFixed(2)}
+                              Cód: {item.code} • Costo Ref: ${formatCostPrice(item.estimatedCost)}
                             </div>
                           </div>
                           <div className="text-right shrink-0">
@@ -572,7 +573,7 @@ export const OrderPlannerScreen: React.FC = () => {
                             <div className="font-mono text-[10px] text-[var(--ui-muted)] flex items-center gap-2">
                               <span>Cód: {prod.code}</span>
                               <span>•</span>
-                              <span>Costo: ${prod.costPrice.toFixed(2)}</span>
+                              <span>Costo: ${formatCostPrice(prod.costPrice)}</span>
                             </div>
                           </div>
 
@@ -676,10 +677,15 @@ export const OrderPlannerScreen: React.FC = () => {
                               <label className="text-[10px] text-[var(--ui-muted)] font-medium">Costo $:</label>
                               <input
                                 type="number"
-                                step="0.01"
+                                step="0.0001"
                                 min="0"
                                 value={item.estimatedCost}
-                                onChange={(e) => handleUpdateDraftCost(item.productId, parseFloat(e.target.value) || 0)}
+                                onChange={(e) =>
+                                  handleUpdateDraftCost(
+                                    item.productId,
+                                    roundCostPrice(parseDecimalInput(e.target.value))
+                                  )
+                                }
                                 className="w-16 px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded font-mono font-bold text-xs text-right"
                               />
                             </div>

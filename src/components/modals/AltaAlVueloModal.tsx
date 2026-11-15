@@ -10,6 +10,7 @@ import { useStore } from '../../context/StoreContext';
 import { Category } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
 import { useStoreProviders } from '../../utils/providers';
+import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { ProviderSelectorField } from './ProviderSelectorField';
 
 export const AltaAlVueloModal: React.FC = () => {
@@ -70,8 +71,8 @@ export const AltaAlVueloModal: React.FC = () => {
 
   if (!isAltaAlVueloOpen) return null;
 
-  const costNum = parseFloat(costPrice) || 0;
-  const saleNum = parseFloat(salePrice) || 0;
+  const costNum = roundCostPrice(parseDecimalInput(costPrice));
+  const saleNum = parseDecimalInput(salePrice);
   const marginPercent =
     costNum > 0 && saleNum >= costNum
       ? (((saleNum - costNum) / costNum) * 100).toFixed(0)
@@ -199,7 +200,7 @@ export const AltaAlVueloModal: React.FC = () => {
                   </span>
                   <input
                     type="number"
-                    step="0.01"
+                    step="0.0001"
                     min="0"
                     value={costPrice}
                     onChange={(e) => setCostPrice(e.target.value)}

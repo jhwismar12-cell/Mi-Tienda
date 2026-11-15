@@ -4,6 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Category, Product } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
 import { useStoreProviders } from '../../utils/providers';
+import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 
 export function formatPromoDescription(
@@ -100,7 +101,7 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
 
     const cleanName = name.trim();
     const parsedSale = parseFloat(salePrice.replace(',', '.'));
-    const parsedCost = parseFloat(costPrice.replace(',', '.'));
+    const parsedCost = roundCostPrice(parseDecimalInput(costPrice));
     const parsedStock = parseFloat(stock.replace(',', '.'));
 
     if (!cleanName) {
@@ -278,7 +279,7 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
             </label>
             <input
               type="number"
-              step="0.001"
+              step="0.0001"
               min="0"
               value={costPrice}
               onChange={(e) => setCostPrice(e.target.value)}

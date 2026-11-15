@@ -39,6 +39,7 @@ import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 import { useStoreProviders } from '../../utils/providers';
+import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { sounds } from '../../utils/audio';
 
 function looksLikeBarcode(query: string): boolean {
@@ -151,7 +152,7 @@ export const InventoryScreen: React.FC = () => {
     setEditDistributor(product.distributor);
     setEditBarcode(product.barcode || '');
     setEditSalePrice(product.salePrice.toFixed(2));
-    setEditCostPrice(product.costPrice.toFixed(2));
+    setEditCostPrice(formatCostPrice(product.costPrice));
     setEditUnit(product.unit || 'UNIDAD');
     setEditAllowFraction(Boolean(product.allowFraction));
     setEditDescription(product.description || '');
@@ -165,8 +166,8 @@ export const InventoryScreen: React.FC = () => {
       showToast('El nombre del producto es obligatorio');
       return;
     }
-    const sPrice = parseFloat(editSalePrice) || 0;
-    const cPrice = parseFloat(editCostPrice) || 0;
+    const sPrice = parseDecimalInput(editSalePrice);
+    const cPrice = roundCostPrice(parseDecimalInput(editCostPrice));
     if (sPrice <= 0) {
       showToast('El precio de venta debe ser mayor a 0');
       return;
@@ -334,7 +335,7 @@ export const InventoryScreen: React.FC = () => {
     const rows = products
       .map(
         p =>
-          `"${p.code}","${p.barcode || ''}","${p.name}","${p.distributor || 'General'}","${p.category}",${p.costPrice.toFixed(2)},${p.salePrice.toFixed(2)},${p.stock},${p.minStock}`
+          `"${p.code}","${p.barcode || ''}","${p.name}","${p.distributor || 'General'}","${p.category}",${formatCostPrice(p.costPrice)},${p.salePrice.toFixed(2)},${p.stock},${p.minStock}`
       )
       .join('\n');
     const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
@@ -1033,7 +1034,7 @@ export const InventoryScreen: React.FC = () => {
 
                       {/* 6. Costo */}
                       <td className="px-3 py-3 font-mono text-right text-[var(--ui-muted)]">
-                        ${product.costPrice.toFixed(2)}
+                        ${formatCostPrice(product.costPrice)}
                       </td>
 
                       {/* 7. Sale Price (Interactive Button) */}
@@ -1166,7 +1167,7 @@ export const InventoryScreen: React.FC = () => {
               <div className="bg-[var(--ui-surface)] p-2.5 rounded-lg border border-[var(--ui-border)]">
                 <div className="text-[10px] text-[var(--ui-muted)] uppercase font-sans font-semibold">Costo Compra</div>
                 <div className="text-lg font-black text-[var(--ui-muted)]">
-                  ${selectedProduct.costPrice.toFixed(2)}
+                  ${formatCostPrice(selectedProduct.costPrice)}
                 </div>
               </div>
             </div>
@@ -1560,8 +1561,9 @@ export const InventoryScreen: React.FC = () => {
                   <span className="absolute left-3 top-2 font-mono text-xs text-[var(--ui-muted)]">$</span>
                   <input
                     type="number"
-                    step="0.01"
+                    step="0.0001"
                     min="0"
+                    aria-label="Precio de Compra / Costo ($)"
                     value={editCostPrice}
                     onChange={(e) => setEditCostPrice(e.target.value)}
                     className="w-full pl-7 pr-3 py-1.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg font-mono font-semibold text-xs outline-none focus:border-[var(--ui-brand)]"

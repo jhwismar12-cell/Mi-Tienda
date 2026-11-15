@@ -23,6 +23,7 @@ import { TopHeader } from '../src/components/TopHeader';
 import { ProvidersScreen } from '../src/components/providers/ProvidersScreen';
 import { LoginScreen } from '../src/components/auth/LoginScreen';
 import { canAutoFocusInput } from '../src/utils/responsive';
+import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../src/utils/currency';
 
 const product: Product = { id: '1', code: 'INTERNAL', barcode: 'BARCODE', name: 'Producto', category: 'Bebidas', costPrice: 2, salePrice: 3, stock: 10, minStock: 1 };
 const shift: BackendCashSession = {
@@ -1582,4 +1583,160 @@ test('ProvidersScreen shows consequence warning alert before deleting distributo
   assert.equal(delStore.cart.length, 0);
   assert.ok(!textOf(renderer.root).includes('Distribuidora Borrable'));
   assert.ok(textOf(renderer.root).includes('Distribuidora Conservada'));
+});
+
+test('Cost inputs support 4 decimal places across InventoryScreen, NewProductModal, and ReceptionScreen', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  assert.equal(formatCostPrice(1.5), '1.50');
+  assert.equal(formatCostPrice(1.045), '1.045');
+  assert.equal(formatCostPrice(1.3043), '1.3043');
+  assert.equal(formatCostPrice(0.52833), '0.5283');
+  assert.equal(roundCostPrice(parseDecimalInput('1,3043')), 1.3043);
+
+  let updatedCostPayload: number | null = null;
+  let createdCostPayload: number | null = null;
+  let purchasePayload: any = null;
+
+  t.mock.method(api, 'getProductos', async () => [
+    {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 40,
+      codigo_interno: '794166007255',
+      codigo_barras_principal: '794166007255',
+      codigos_barras: ['794166007255'],
+      nombre: 'Producto 4 Decimales',
+      precio_compra_actual: 1.3043,
+      precio_venta_actual: 2.0,
+      stock_actual: 10
+    }
+  ]);
+  t.mock.method(api, 'actualizarProducto', async (_id: number, payload: any) => {
+    updatedCostPayload = payload.precio_compra_actual;
+    return {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 40,
+      codigo_interno: '794166007255',
+      nombre: 'Producto 4 Decimales',
+      precio_compra_actual: payload.precio_compra_actual,
+      precio_venta_actual: payload.precio_venta_actual
+    };
+  });
+  t.mock.method(api, 'crearProducto', async (payload: any) => {
+    createdCostPayload = payload.precio_compra_actual;
+    return {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 41,
+      codigo_interno: payload.codigo_interno,
+      nombre: payload.nombre,
+      precio_compra_actual: payload.precio_compra_actual,
+      precio_venta_actual: payload.precio_venta_actual
+    };
+  });
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 5, ruc_ci: '1790005551001', razon_social: 'Azende Logistics' }
+  ]);
+  t.mock.method(api, 'getCategorias', async () => [
+    { id_categoria: 1, nombre: 'Abarrotes' }
+  ]);
+  t.mock.method(api, 'getIAConfig', async () => ({ configurado: false, api_key_mascara: '' }));
+  t.mock.method(api, 'registrarCompra', async (payload: any) => {
+    purchasePayload = payload;
+    return { success: true };
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  let fourDecStore!: StoreContextType;
+  function FourDecProbe() { fourDecStore = useStore(); return null; }
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <FourDecProbe />
+        <InventoryScreen />
+        <NewProductModal />
+      </StoreProvider>
+    );
+  });
+
+  // 1. Inventory displays 4 decimals instead of truncating to .toFixed(2)
+  assert.ok(textOf(renderer.root).includes('$1.3043'));
+
+  // 2. Edit Product modal preserves 1.3043, has step="0.0001", and accepts updated 4-decimal input (with comma or dot)
+  const editRowBtn = renderer.root.findAllByProps({ title: 'Editar Código de Barras y Precio' })[0];
+  await act(async () => {
+    editRowBtn.props.onClick({ stopPropagation() {} });
+  });
+  const editCostInput = renderer.root.findByProps({ 'aria-label': 'Precio de Compra / Costo ($)' });
+  assert.equal(editCostInput.props.step, '0.0001');
+  assert.equal(editCostInput.props.value, '1.3043');
+
+  await act(async () => {
+    editCostInput.props.onChange({ target: { value: '1,3043' } });
+  });
+  await act(async () => {
+    await renderer.root.findAllByType('form')[0].props.onSubmit({ preventDefault() {} });
+  });
+  assert.equal(updatedCostPayload, 1.3043);
+
+  // 3. NewProductModal also uses step="0.0001" and saves 4 decimals
+  await act(async () => {
+    fourDecStore.openNewProductModal('794166009999');
+  });
+  const newCostInput = renderer.root.findByProps({ 'aria-label': 'Precio de Costo ($)' });
+  assert.equal(newCostInput.props.step, '0.0001');
+  const newNameInput = renderer.root.findByProps({ 'aria-label': 'Nombre del producto' });
+  await act(async () => {
+    newNameInput.props.onChange({ target: { value: 'Nuevo 4 Dec' } });
+    newCostInput.props.onChange({ target: { value: '2.0667' } });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+  assert.equal(createdCostPayload, 2.0667);
+
+  // 4. ReceptionScreen computes 20 x $1.3043 = $26.09 cleanly with step="0.0001"
+  await act(async () => {
+    renderer.update(<StoreProvider><FourDecProbe /><ReceptionScreen /></StoreProvider>);
+  });
+  const select = renderer.root.findByType('select');
+  await act(async () => {
+    select.props.onChange({ target: { value: '5' } });
+  });
+  const scanInput = renderer.root.findAllByType('input').find((n) => n.props.placeholder?.startsWith('Escanear código'))!;
+  await act(async () => {
+    scanInput.props.onChange({ target: { value: '794166007255' } });
+  });
+  await act(async () => {
+    renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+  const unitCostInput = renderer.root.findByProps({ 'aria-label': 'Costo unitario de Producto 4 Decimales' });
+  assert.equal(unitCostInput.props.step, '0.0001');
+  assert.equal(unitCostInput.props.value, 1.3043);
+
+  // Change quantity to 20 -> subtotal must reflect 20 * 1.3043 = $26.09 (vs $26.00 if truncated to 1.30)
+  const qtyInput = renderer.root.findAllByType('input').find((i) => i.props.min === '0.01' && i.props.step === '0.01')!;
+  await act(async () => {
+    qtyInput.props.onChange({ target: { value: '20' } });
+  });
+  assert.ok(textOf(renderer.root).includes('$26.09'));
+
+  const saveReceptionBtn = renderer.root.findAllByType('button').find((node) =>
+    node.findAllByType('span').some((span) => span.children.includes('Confirmar e Ingresar a Stock [F10]'))
+  )!;
+  await act(async () => {
+    await saveReceptionBtn.props.onClick();
+  });
+  assert.equal(purchasePayload.items[0].cantidad, 20);
+  assert.equal(purchasePayload.items[0].costo_unitario, 1.3043);
 });
