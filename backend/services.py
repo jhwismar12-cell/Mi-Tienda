@@ -251,6 +251,37 @@ def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
         )
 
 
+def _eliminar_producto_en_conn(cursor: sqlite3.Cursor, id_producto: int) -> bool:
+    """Elimina un producto de raíz si no tiene historial comercial; en caso contrario lo desactiva,
+    libera sus códigos de barras y lo desvincula del distribuidor. Retorna True si fue borrado físico."""
+    has_sales = cursor.execute(
+        "SELECT 1 FROM VENTAS_DETALLE WHERE IDProducto = ? LIMIT 1",
+        (id_producto,),
+    ).fetchone()
+    has_purchases = cursor.execute(
+        "SELECT 1 FROM COMPRAS_DETALLE WHERE IDProducto = ? LIMIT 1",
+        (id_producto,),
+    ).fetchone()
+    has_orders = cursor.execute(
+        "SELECT 1 FROM PEDIDOS_DETALLE WHERE IDProducto = ? LIMIT 1",
+        (id_producto,),
+    ).fetchone()
+
+    if not has_sales and not has_purchases and not has_orders:
+        cursor.execute("DELETE FROM MOVIMIENTOS_INVENTARIO WHERE IDProducto = ?", (id_producto,))
+        cursor.execute("DELETE FROM HISTORIAL_PRECIOS WHERE IDProducto = ?", (id_producto,))
+        cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
+        cursor.execute("DELETE FROM PRODUCTOS WHERE IDProducto = ?", (id_producto,))
+        return True
+
+    cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
+    cursor.execute(
+        "UPDATE PRODUCTOS SET Activo = 0, IDProveedor = NULL, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
+        (id_producto,),
+    )
+    return False
+
+
 def eliminar_producto(id_producto: int) -> dict:
     """Elimina un producto de raíz si no tiene historial comercial; si tiene ventas/compras/pedidos,
     lo desactiva, libera sus códigos de barras y lo desvincula del distribuidor."""
@@ -263,39 +294,75 @@ def eliminar_producto(id_producto: int) -> dict:
         if not row:
             return {"success": True, "deleted_permanently": False, "message": "Producto no encontrado"}
 
-        has_sales = cursor.execute(
-            "SELECT 1 FROM VENTAS_DETALLE WHERE IDProducto = ? LIMIT 1",
-            (id_producto,),
-        ).fetchone()
-        has_purchases = cursor.execute(
-            "SELECT 1 FROM COMPRAS_DETALLE WHERE IDProducto = ? LIMIT 1",
-            (id_producto,),
-        ).fetchone()
-        has_orders = cursor.execute(
-            "SELECT 1 FROM PEDIDOS_DETALLE WHERE IDProducto = ? LIMIT 1",
-            (id_producto,),
-        ).fetchone()
-
-        if not has_sales and not has_purchases and not has_orders:
-            cursor.execute("DELETE FROM MOVIMIENTOS_INVENTARIO WHERE IDProducto = ?", (id_producto,))
-            cursor.execute("DELETE FROM HISTORIAL_PRECIOS WHERE IDProducto = ?", (id_producto,))
-            cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
-            cursor.execute("DELETE FROM PRODUCTOS WHERE IDProducto = ?", (id_producto,))
+        deleted_permanently = _eliminar_producto_en_conn(cursor, id_producto)
+        if deleted_permanently:
             return {
                 "success": True,
                 "deleted_permanently": True,
                 "message": "Producto eliminado de raíz del inventario",
             }
-
-        cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
-        cursor.execute(
-            "UPDATE PRODUCTOS SET Activo = 0, IDProveedor = NULL, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
-            (id_producto,),
-        )
         return {
             "success": True,
             "deleted_permanently": False,
             "message": "Producto retirado del catálogo (se mantiene en historial de ventas/compras)",
+        }
+
+
+def eliminar_proveedor(id_proveedor: int) -> dict:
+    """Elimina un distribuidor junto con todos sus productos asociados."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        prov = cursor.execute(
+            "SELECT IDProveedor, RazonSocial FROM PROVEEDORES WHERE IDProveedor = ?",
+            (id_proveedor,),
+        ).fetchone()
+        if not prov:
+            return {
+                "success": True,
+                "deleted_products_permanently": 0,
+                "archived_products": 0,
+                "total_products_removed": 0,
+                "provider_deleted_permanently": False,
+                "message": "Distribuidor no encontrado",
+            }
+
+        product_rows = cursor.execute(
+            "SELECT IDProducto FROM PRODUCTOS WHERE IDProveedor = ? AND Activo = 1",
+            (id_proveedor,),
+        ).fetchall()
+
+        deleted_permanently = 0
+        archived_products = 0
+        for p_row in product_rows:
+            if _eliminar_producto_en_conn(cursor, p_row["IDProducto"]):
+                deleted_permanently += 1
+            else:
+                archived_products += 1
+
+        # Clear remaining links if any historical inactive product still references this supplier
+        cursor.execute("UPDATE PRODUCTOS SET IDProveedor = NULL WHERE IDProveedor = ?", (id_proveedor,))
+        cursor.execute("UPDATE PEDIDOS SET IDProveedor = NULL WHERE IDProveedor = ?", (id_proveedor,))
+
+        has_compras = cursor.execute(
+            "SELECT 1 FROM COMPRAS WHERE IDProveedor = ? LIMIT 1",
+            (id_proveedor,),
+        ).fetchone()
+
+        provider_deleted_permanently = False
+        if not has_compras:
+            cursor.execute("DELETE FROM PROVEEDORES WHERE IDProveedor = ?", (id_proveedor,))
+            provider_deleted_permanently = True
+        else:
+            cursor.execute("UPDATE PROVEEDORES SET Activo = 0 WHERE IDProveedor = ?", (id_proveedor,))
+
+        total_removed = deleted_permanently + archived_products
+        return {
+            "success": True,
+            "deleted_products_permanently": deleted_permanently,
+            "archived_products": archived_products,
+            "total_products_removed": total_removed,
+            "provider_deleted_permanently": provider_deleted_permanently,
+            "message": f"Distribuidor eliminado junto con {total_removed} producto(s)",
         }
 
 # --- Cash Register Services ---

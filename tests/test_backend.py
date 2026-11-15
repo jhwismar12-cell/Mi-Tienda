@@ -940,6 +940,112 @@ class TestTiendaBackend(unittest.TestCase):
         search_sold = self.client.get("/api/productos/buscar?query=BEB-COC-3000").json()
         self.assertIsNone(search_sold["producto"])
 
+    def test_22_eliminar_distribuidor_y_sus_productos(self):
+        # 1. Distributor without transaction history: deletes both distributor and all products permanently
+        prov1_res = self.client.post("/api/proveedores", json={"razon_social": "Distribuidora Temporal"})
+        self.assertEqual(prov1_res.status_code, 200)
+        pid1 = prov1_res.json()["id_proveedor"]
+
+        p1_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": pid1,
+            "codigo_interno": "TMP-01",
+            "nombre": "Producto Temp 1",
+            "precio_compra_actual": 1.0,
+            "precio_venta_actual": 2.0,
+            "stock_inicial": 4,
+            "stock_minimo": 1,
+            "codigos_barras": ["7868880001111"],
+        })
+        self.assertEqual(p1_res.status_code, 200)
+        p1 = p1_res.json()["id_producto"]
+
+        p2_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": pid1,
+            "codigo_interno": "TMP-02",
+            "nombre": "Producto Temp 2",
+            "precio_compra_actual": 1.5,
+            "precio_venta_actual": 3.0,
+            "stock_inicial": 2,
+            "stock_minimo": 1,
+            "codigos_barras": ["7868880002222"],
+        })
+        self.assertEqual(p2_res.status_code, 200)
+        p2 = p2_res.json()["id_producto"]
+
+        del1 = self.client.delete(f"/api/proveedores/{pid1}")
+        self.assertEqual(del1.status_code, 200)
+        body1 = del1.json()
+        self.assertTrue(body1["success"])
+        self.assertEqual(body1["deleted_products_permanently"], 2)
+        self.assertEqual(body1["archived_products"], 0)
+        self.assertEqual(body1["total_products_removed"], 2)
+        self.assertTrue(body1["provider_deleted_permanently"])
+
+        prov_ids_after = {pr["id_proveedor"] for pr in self.client.get("/api/proveedores").json()}
+        self.assertNotIn(pid1, prov_ids_after)
+        prod_ids_after = {pr["id_producto"] for pr in self.client.get("/api/productos").json()}
+        self.assertNotIn(p1, prod_ids_after)
+        self.assertNotIn(p2, prod_ids_after)
+        self.assertIn(1, prod_ids_after)
+        self.assertIsNone(self.client.get("/api/productos/buscar?query=7868880001111").json()["producto"])
+
+        # 2. Distributor WITH purchase history: keeps receipts intact while removing all products & hiding provider
+        prov2_res = self.client.post("/api/proveedores", json={"razon_social": "Distribuidora Historial"})
+        self.assertEqual(prov2_res.status_code, 200)
+        pid2 = prov2_res.json()["id_proveedor"]
+
+        p_hist_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": pid2,
+            "codigo_interno": "HIS-01",
+            "nombre": "Producto Con Compra",
+            "precio_compra_actual": 2.0,
+            "precio_venta_actual": 4.0,
+            "stock_inicial": 0,
+            "stock_minimo": 1,
+            "codigos_barras": ["7868880003333"],
+        })
+        self.assertEqual(p_hist_res.status_code, 200)
+        p_hist = p_hist_res.json()["id_producto"]
+
+        p_fresh_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": pid2,
+            "codigo_interno": "HIS-02",
+            "nombre": "Producto Sin Compra",
+            "precio_compra_actual": 2.5,
+            "precio_venta_actual": 5.0,
+            "stock_inicial": 1,
+            "stock_minimo": 1,
+            "codigos_barras": ["7868880004444"],
+        })
+        self.assertEqual(p_fresh_res.status_code, 200)
+        p_fresh = p_fresh_res.json()["id_producto"]
+
+        buy_res = self.client.post("/api/compras/registrar", json={
+            "id_proveedor": pid2,
+            "numero_documento": "FAC-DELPROV-1",
+            "items": [{"id_producto": p_hist, "cantidad": 3, "costo_unitario": 2.0}]
+        })
+        self.assertEqual(buy_res.status_code, 200)
+
+        del2 = self.client.delete(f"/api/proveedores/{pid2}")
+        self.assertEqual(del2.status_code, 200)
+        body2 = del2.json()
+        self.assertTrue(body2["success"])
+        self.assertEqual(body2["deleted_products_permanently"], 1)
+        self.assertEqual(body2["archived_products"], 1)
+        self.assertEqual(body2["total_products_removed"], 2)
+        self.assertFalse(body2["provider_deleted_permanently"])
+
+        prov_ids_final = {pr["id_proveedor"] for pr in self.client.get("/api/proveedores").json()}
+        self.assertNotIn(pid2, prov_ids_final)
+        prod_ids_final = {pr["id_producto"] for pr in self.client.get("/api/productos").json()}
+        self.assertNotIn(p_hist, prod_ids_final)
+        self.assertNotIn(p_fresh, prod_ids_final)
+
 if __name__ == "__main__":
     unittest.main()
 

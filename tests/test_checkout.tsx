@@ -1452,3 +1452,134 @@ test('Sidebar includes Distribuidores tab, ProvidersScreen renames distributor a
   );
   assert.ok(sortContainer, 'Expected Modo de Organización options to be wrapped with hidden lg:block for phone menu');
 });
+
+test('ProvidersScreen shows consequence warning alert before deleting distributor and removes all its products on confirm', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  let deletedProviderId: number | null = null;
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 10, ruc_ci: '1790001112001', razon_social: 'Distribuidora Borrable', telefono: '099111222' },
+    { id_proveedor: 11, ruc_ci: '1790002223001', razon_social: 'Distribuidora Conservada', telefono: '099333444' }
+  ]);
+  t.mock.method(api, 'eliminarProveedor', async (id: number) => {
+    deletedProviderId = id;
+    return {
+      success: true,
+      deleted_products_permanently: 2,
+      archived_products: 0,
+      total_products_removed: 2,
+      provider_deleted_permanently: true,
+      message: 'Distribuidor eliminado junto con 2 producto(s) asociados'
+    };
+  });
+  t.mock.method(api, 'getProductos', async () => [
+    {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 21,
+      codigo_interno: 'BOR-01',
+      nombre: 'Galleta Borrable 1',
+      stock_actual: 5,
+      id_proveedor: 10,
+      proveedor_nombre: 'Distribuidora Borrable'
+    },
+    {
+      ...createdProduct('Abarrotes', 2),
+      id_producto: 22,
+      codigo_interno: 'BOR-02',
+      nombre: 'Galleta Borrable 2',
+      stock_actual: 3,
+      id_proveedor: 10,
+      proveedor_nombre: 'Distribuidora Borrable'
+    },
+    {
+      ...createdProduct('Bebidas', 3),
+      id_producto: 31,
+      codigo_interno: 'CON-01',
+      nombre: 'Jugo Conservado',
+      stock_actual: 4,
+      id_proveedor: 11,
+      proveedor_nombre: 'Distribuidora Conservada'
+    }
+  ]);
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  let delStore!: StoreContextType;
+  function DelProbe() { delStore = useStore(); return null; }
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <DelProbe />
+        <ProvidersScreen />
+      </StoreProvider>
+    );
+  });
+
+  // Add one owned product to cart so we verify cart cleanup too
+  await act(async () => {
+    delStore.addProductToCart(delStore.products.find((p) => p.id === '21')!);
+  });
+  assert.equal(delStore.cart.length, 1);
+  assert.equal(delStore.products.length, 3);
+
+  // 1. Clicking card trash opens warning alert dialog without deleting yet
+  const cardDelBtn = renderer.root.findByProps({ 'aria-label': 'Eliminar distribuidor Distribuidora Borrable' });
+  await act(async () => {
+    cardDelBtn.props.onClick({ stopPropagation() {} });
+  });
+
+  const alertDialog = renderer.root.findByProps({ role: 'alertdialog' });
+  const alertText = textOf(alertDialog);
+  assert.ok(alertText.includes('¿Qué implica eliminar este distribuidor?'));
+  assert.ok(alertText.includes('Se eliminarán todos los 2 productos asociados'));
+  assert.equal(deletedProviderId, null);
+
+  // 2. Canceling keeps distributor and all products untouched
+  const cancelBtn = alertDialog.findAllByType('button').find((b) => textOf(b).trim() === 'Cancelar');
+  assert.ok(cancelBtn);
+  await act(async () => {
+    cancelBtn!.props.onClick();
+  });
+  assert.equal(deletedProviderId, null);
+  assert.equal(delStore.products.length, 3);
+
+  // 3. Selecting distributor and clicking header "Eliminar Distribuidor" -> confirm deletes provider & all owned products
+  const borrableCard = renderer.root.findAllByType('div').find(
+    (d) => d.props.role === 'button' && textOf(d).includes('Distribuidora Borrable')
+  );
+  await act(async () => {
+    borrableCard!.props.onClick();
+  });
+  const headerDelBtn = renderer.root.findByProps({ 'aria-label': 'Eliminar distribuidor seleccionado' });
+  await act(async () => {
+    headerDelBtn.props.onClick();
+  });
+  const confirmBtn = renderer.root
+    .findByProps({ role: 'alertdialog' })
+    .findAllByType('button')
+    .find((b) => textOf(b).includes('Sí, eliminar distribuidor y productos'));
+  assert.ok(confirmBtn);
+
+  await act(async () => {
+    await confirmBtn!.props.onClick();
+  });
+
+  assert.equal(deletedProviderId, 10);
+  assert.deepEqual(
+    delStore.products.map((p) => p.id),
+    ['31']
+  );
+  assert.equal(delStore.cart.length, 0);
+  assert.ok(!textOf(renderer.root).includes('Distribuidora Borrable'));
+  assert.ok(textOf(renderer.root).includes('Distribuidora Conservada'));
+});

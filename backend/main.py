@@ -673,11 +673,7 @@ def actualizar_proveedor(id_proveedor: int, data: ProveedorUpdate):
 
 @app.delete("/api/proveedores/{id_proveedor}", tags=["Auxiliares"])
 def eliminar_proveedor(id_proveedor: int):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE PROVEEDORES SET Activo = 0 WHERE IDProveedor = ?", (id_proveedor,))
-        cursor.execute("UPDATE PRODUCTOS SET IDProveedor = NULL WHERE IDProveedor = ?", (id_proveedor,))
-        return {"success": True, "message": "Proveedor desactivado exitosamente"}
+    return services.eliminar_proveedor(id_proveedor)
 
 @app.get("/api/configuracion", tags=["Configuracion"])
 def obtener_configuracion():

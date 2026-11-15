@@ -19,8 +19,15 @@ import { Product } from '../../types';
 import { StoreProviderOption, useStoreProviders } from '../../utils/providers';
 
 export const ProvidersScreen: React.FC = () => {
-  const { products, deleteProduct, renameProviderInProducts, showToast } = useStore();
-  const { providers, addLocalProvider, updateLocalProvider } = useStoreProviders(true, products);
+  const {
+    products,
+    deleteProduct,
+    renameProviderInProducts,
+    deleteProviderWithProducts,
+    showToast
+  } = useStore();
+  const { providers, addLocalProvider, updateLocalProvider, removeLocalProvider } =
+    useStoreProviders(true, products);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [productSearch, setProductSearch] = useState('');
@@ -38,6 +45,10 @@ export const ProvidersScreen: React.FC = () => {
   // Confirm permanent / root product deletion modal
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [isDeletingProduct, setIsDeletingProduct] = useState(false);
+
+  // Confirm distributor deletion (and all its products) modal
+  const [providerToDelete, setProviderToDelete] = useState<StoreProviderOption | null>(null);
+  const [isDeletingProvider, setIsDeletingProvider] = useState(false);
 
   const productsByProviderId = useMemo(() => {
     const map = new Map<number, Product[]>();
@@ -190,6 +201,31 @@ export const ProvidersScreen: React.FC = () => {
     }
   };
 
+  const openDeleteProviderModal = (prov: StoreProviderOption, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setProviderToDelete(prov);
+  };
+
+  const handleConfirmDeleteProvider = async () => {
+    if (!providerToDelete || isDeletingProvider) return;
+    setIsDeletingProvider(true);
+    try {
+      await deleteProviderWithProducts(
+        providerToDelete.id_proveedor,
+        providerToDelete.razon_social
+      );
+      removeLocalProvider(providerToDelete.id_proveedor);
+      if (selectedProviderId === providerToDelete.id_proveedor) {
+        setSelectedProviderId(null);
+      }
+      setProviderToDelete(null);
+    } catch {
+      // StoreContext already notifies ApiError
+    } finally {
+      setIsDeletingProvider(false);
+    }
+  };
+
   return (
     <div className="workspace-screen flex-1 flex flex-col h-full overflow-hidden bg-[var(--ui-surface)] select-none">
       {/* Page Header */}
@@ -301,16 +337,27 @@ export const ProvidersScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={(e) => openEditModal(prov, e)}
-                    aria-label={`Editar distribuidor ${prov.razon_social}`}
-                    title="Editar nombre o datos del distribuidor"
-                    className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] hover:text-[var(--ui-brand-strong)] text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Editar</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => openEditModal(prov, e)}
+                      aria-label={`Editar distribuidor ${prov.razon_social}`}
+                      title="Editar nombre o datos del distribuidor"
+                      className="px-2.5 py-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] hover:text-[var(--ui-brand-strong)] text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Editar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => openDeleteProviderModal(prov, e)}
+                      aria-label={`Eliminar distribuidor ${prov.razon_social}`}
+                      title="Eliminar distribuidor y todos sus productos"
+                      className="p-1.5 rounded-lg border border-[var(--ui-danger-border)] bg-[var(--ui-danger-bg)] hover:opacity-85 text-[var(--ui-danger-text)] cursor-pointer transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })
@@ -361,14 +408,25 @@ export const ProvidersScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(selectedProvider)}
-                    className="px-3 py-1.5 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors shrink-0"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Cambiar Nombre / Editar</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(selectedProvider)}
+                      className="px-3 py-1.5 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors shrink-0"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Cambiar Nombre / Editar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openDeleteProviderModal(selectedProvider)}
+                      aria-label="Eliminar distribuidor seleccionado"
+                      className="px-3 py-1.5 rounded-lg border border-[var(--ui-danger-border)] bg-[var(--ui-danger-bg)] hover:opacity-85 text-[var(--ui-danger-text)] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Eliminar Distribuidor</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="relative">
@@ -587,6 +645,72 @@ export const ProvidersScreen: React.FC = () => {
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>{isDeletingProduct ? 'Eliminando...' : 'Sí, eliminar de raíz'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Distributor Deletion Warning Modal */}
+      {providerToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-provider-title"
+            className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-md w-full overflow-hidden"
+          >
+            <div className="px-5 py-4 bg-[var(--ui-danger-bg)] border-b border-[var(--ui-danger-border)] flex items-center gap-2.5 text-[var(--ui-danger-text)]">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h2 id="delete-provider-title" className="font-bold text-base">
+                Eliminar Distribuidor y Productos
+              </h2>
+            </div>
+
+            <div className="p-5 space-y-3 text-xs md:text-sm text-[var(--ui-text)]">
+              <p>
+                Estás a punto de eliminar al distribuidor{' '}
+                <strong>{providerToDelete.razon_social}</strong>.
+              </p>
+              <div className="p-3 rounded-xl bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] text-[var(--ui-danger-text)] text-xs space-y-1.5">
+                <p className="font-bold">¿Qué implica eliminar este distribuidor?</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>
+                    <strong>
+                      {(productsByProviderId.get(providerToDelete.id_proveedor) || []).length === 1
+                        ? 'Se eliminará el 1 producto asociado'
+                        : `Se eliminarán todos los ${(productsByProviderId.get(providerToDelete.id_proveedor) || []).length} productos asociados`}
+                    </strong>{' '}
+                    a este distribuidor del inventario, Punto de Venta y lector de códigos de barras.
+                  </li>
+                  <li>
+                    Los artículos sin ventas ni compras previas se borrarán de raíz (liberando sus códigos de barras). Si alguno tiene historial comercial, sus recibos antiguos se conservarán sin mostrar el producto en el catálogo activo.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--ui-border)]">
+                <button
+                  type="button"
+                  onClick={() => setProviderToDelete(null)}
+                  disabled={isDeletingProvider}
+                  className="px-4 py-2 text-xs font-semibold text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-hover)] rounded-xl border border-[var(--ui-border)] cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteProvider}
+                  disabled={isDeletingProvider}
+                  className="px-4 py-2 text-xs font-bold text-white bg-[var(--ui-danger-solid)] hover:opacity-90 disabled:opacity-50 rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    {isDeletingProvider
+                      ? 'Eliminando...'
+                      : 'Sí, eliminar distribuidor y productos'}
+                  </span>
                 </button>
               </div>
             </div>

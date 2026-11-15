@@ -120,5 +120,9 @@ export function useStoreProviders(isOpen: boolean, products: Product[]) {
     []
   );
 
-  return { providers, isLoading, addLocalProvider, updateLocalProvider };
+  const removeLocalProvider = useCallback((id_proveedor: number) => {
+    setProviders(prev => prev.filter(p => p.id_proveedor !== id_proveedor));
+  }, []);
+
+  return { providers, isLoading, addLocalProvider, updateLocalProvider, removeLocalProvider };
 }

@@ -58,6 +58,7 @@ export interface StoreContextType {
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
   renameProviderInProducts: (providerId: number, previousName: string, nextName: string) => void;
+  deleteProviderWithProducts: (providerId: number, providerName: string) => Promise<void>;
   adjustStock: (productId: string, delta: number, type: 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DAÑO', reason?: string) => Promise<void>;
   refreshProducts: () => Promise<void>;
 
@@ -1088,6 +1089,41 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     );
   }, []);
 
+  const deleteProviderWithProducts = async (providerId: number, providerName: string) => {
+    let message = `Distribuidor "${providerName}" y sus productos eliminados`;
+    try {
+      const res = await api.eliminarProveedor(providerId);
+      if (res && typeof res.message === 'string' && res.message.trim()) {
+        message = res.message;
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        showToast(`⚠️ No se pudo eliminar el distribuidor: ${e.message}`);
+        throw e;
+      }
+      console.warn('Eliminación local de distribuidor:', e);
+    }
+
+    const cleanName = providerName.trim().toLowerCase();
+    const removedIds = new Set(
+      products
+        .filter(
+          p =>
+            p.providerId === providerId ||
+            (cleanName !== '' && (p.distributor || '').trim().toLowerCase() === cleanName)
+        )
+        .map(p => p.id)
+    );
+
+    setProducts(prev => prev.filter(p => !removedIds.has(p.id)));
+    setCart(prev => prev.filter(item => !removedIds.has(item.product.id)));
+    if (selectedKardexProductId && removedIds.has(selectedKardexProductId)) {
+      setSelectedKardexProductId(null);
+    }
+    setKardexMovements(prev => prev.filter(m => !removedIds.has(m.productId)));
+    showToast(message);
+  };
+
   const adjustStock = async (
     productId: string,
     delta: number,
@@ -1429,6 +1465,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         updateProduct,
         deleteProduct,
         renameProviderInProducts,
+        deleteProviderWithProducts,
         adjustStock,
         refreshProducts,
         cart,

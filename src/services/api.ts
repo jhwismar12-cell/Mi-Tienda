@@ -417,7 +417,14 @@ export const api = {
       }
     ),
   eliminarProveedor: (id_proveedor: number) =>
-    request<{ success: boolean }>(`/proveedores/${id_proveedor}`, {
+    request<{
+      success: boolean;
+      deleted_products_permanently?: number;
+      archived_products?: number;
+      total_products_removed?: number;
+      provider_deleted_permanently?: boolean;
+      message?: string;
+    }>(`/proveedores/${id_proveedor}`, {
       method: 'DELETE'
     }),
   getConfiguracion: () => request<Record<string, string>>('/configuracion'),
