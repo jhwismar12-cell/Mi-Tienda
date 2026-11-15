@@ -1,4 +1,4 @@
-export type ScreenType = 'pos' | 'inventory' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
+export type ScreenType = 'pos' | 'inventory' | 'providers' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
 
 export const STORE_CATEGORIES = [
   'Abarrotes',

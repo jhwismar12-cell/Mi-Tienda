@@ -57,6 +57,7 @@ export interface StoreContextType {
   addProduct: (prod: Omit<Product, 'id'>) => Promise<Product>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
+  renameProviderInProducts: (providerId: number, previousName: string, nextName: string) => void;
   adjustStock: (productId: string, delta: number, type: 'AJUSTE_POSITIVO' | 'AJUSTE_NEGATIVO' | 'DAÑO', reason?: string) => Promise<void>;
   refreshProducts: () => Promise<void>;
 
@@ -142,6 +143,10 @@ export interface StoreContextType {
 
   isNewProductModalOpen: boolean;
   setIsNewProductModalOpen: (open: boolean) => void;
+  newProductPrefillBarcode: string;
+  openNewProductModal: (prefillBarcode?: string) => void;
+  inventoryScanEvent: { code: string; seq: number } | null;
+  clearInventoryScanEvent: () => void;
 
   isReceiptModalOpen: boolean;
   setIsReceiptModalOpen: (open: boolean) => void;
@@ -330,7 +335,28 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isOpenShiftModalOpen, setIsOpenShiftModalOpen] = useState(false);
   const [isAltaAlVueloOpen, setIsAltaAlVueloOpen] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState('');
-  const [isNewProductModalOpen, setIsNewProductModalOpen] = useState(false);
+  const [isNewProductModalOpenState, setIsNewProductModalOpenState] = useState(false);
+  const [newProductPrefillBarcode, setNewProductPrefillBarcode] = useState('');
+  const [inventoryScanEvent, setInventoryScanEvent] = useState<{ code: string; seq: number } | null>(null);
+  const inventoryScanSeqRef = useRef(0);
+
+  const setIsNewProductModalOpen = useCallback((open: boolean) => {
+    if (!open) {
+      setNewProductPrefillBarcode('');
+    }
+    setIsNewProductModalOpenState(open);
+  }, []);
+
+  const openNewProductModal = useCallback((prefillBarcode?: string) => {
+    setNewProductPrefillBarcode((prefillBarcode || '').trim());
+    setIsNewProductModalOpenState(true);
+  }, []);
+
+  const clearInventoryScanEvent = useCallback(() => {
+    setInventoryScanEvent(null);
+  }, []);
+
+  const isNewProductModalOpen = isNewProductModalOpenState;
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isReportZModalOpen, setIsReportZModalOpen] = useState(false);
   const [isCashMovementModalOpen, setIsCashMovementModalOpen] = useState(false);
@@ -704,6 +730,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     [products, addProductToCart]
   );
 
+  const scannerStateRef = useRef({
+    activeScreen,
+    isModalOpen: false
+  });
+  scannerStateRef.current = {
+    activeScreen,
+    isModalOpen:
+      isOpenShiftModalOpen ||
+      isAltaAlVueloOpen ||
+      isNewProductModalOpenState ||
+      isReceiptModalOpen ||
+      isReportZModalOpen ||
+      isCashMovementModalOpen ||
+      isGlobalSearchOpen
+  };
+
   // Global Keybindings & USB Barcode Scanner support
   useEffect(() => {
     let scannerBuffer = '';
@@ -729,8 +771,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       if (e.key === 'Enter') {
         if (scannerBuffer.length >= 3) {
-          addToCartByBarcodeOrCode(scannerBuffer);
+          const scanned = scannerBuffer;
           scannerBuffer = '';
+          const { activeScreen: currentScreen, isModalOpen } = scannerStateRef.current;
+          if (isModalOpen) return;
+          if (currentScreen === 'inventory') {
+            setInventoryScanEvent({ code: scanned, seq: ++inventoryScanSeqRef.current });
+          } else {
+            addToCartByBarcodeOrCode(scanned);
+          }
         }
         return;
       }
@@ -989,17 +1038,55 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const deleteProduct = async (id: string) => {
+    let message = 'Producto eliminado';
+    let deletedPermanently = true;
     try {
       const numId = parseInt(id);
       if (!isNaN(numId)) {
-        await api.eliminarProducto(numId);
+        const res = await api.eliminarProducto(numId);
+        if (res && typeof res === 'object' && 'deleted_permanently' in res) {
+          deletedPermanently = Boolean((res as { deleted_permanently?: boolean }).deleted_permanently);
+        }
+        if (res && typeof res === 'object' && 'message' in res && typeof (res as { message?: string }).message === 'string') {
+          message = (res as { message?: string }).message as string;
+        }
       }
     } catch (e) {
+      if (e instanceof ApiError) {
+        showToast(`⚠️ No se pudo eliminar el producto: ${e.message}`);
+        throw e;
+      }
       console.warn('Eliminación local:', e);
     }
     setProducts(prev => prev.filter(p => p.id !== id));
-    showToast('Producto eliminado');
+    setCart(prev => prev.filter(item => item.product.id !== id));
+    if (selectedKardexProductId === id) {
+      setSelectedKardexProductId(null);
+    }
+    if (deletedPermanently) {
+      setKardexMovements(prev => prev.filter(m => m.productId !== id));
+    }
+    showToast(message);
   };
+
+  const renameProviderInProducts = useCallback((providerId: number, previousName: string, nextName: string) => {
+    const cleanPrev = previousName.trim().toLowerCase();
+    const cleanNext = nextName.trim();
+    if (!cleanNext) return;
+    setProducts(prev =>
+      prev.map(p => {
+        const matchesId = p.providerId === providerId;
+        const matchesName =
+          p.providerId === undefined &&
+          cleanPrev !== '' &&
+          (p.distributor || '').trim().toLowerCase() === cleanPrev;
+        if (matchesId || matchesName) {
+          return { ...p, providerId, distributor: cleanNext };
+        }
+        return p;
+      })
+    );
+  }, []);
 
   const adjustStock = async (
     productId: string,
@@ -1341,6 +1428,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addProduct,
         updateProduct,
         deleteProduct,
+        renameProviderInProducts,
         adjustStock,
         refreshProducts,
         cart,
@@ -1394,6 +1482,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         handleSaveAltaAlVuelo,
         isNewProductModalOpen,
         setIsNewProductModalOpen,
+        newProductPrefillBarcode,
+        openNewProductModal,
+        inventoryScanEvent,
+        clearInventoryScanEvent,
         isReceiptModalOpen,
         setIsReceiptModalOpen,
         isReportZModalOpen,

@@ -388,12 +388,34 @@ export const api = {
     ),
 
   getCategorias: () => request<Array<{ id_categoria: number; nombre: string }>>('/categorias'),
-  getProveedores: () => request<Array<{ id_proveedor: number; ruc_ci: string; razon_social: string; telefono?: string; direccion?: string }>>('/proveedores'),
+  getProveedores: () =>
+    request<
+      Array<{
+        id_proveedor: number;
+        ruc_ci: string;
+        razon_social: string;
+        telefono?: string;
+        email?: string;
+        direccion?: string;
+        observaciones?: string;
+      }>
+    >('/proveedores'),
   crearProveedor: (data: { ruc_ci?: string; razon_social: string; telefono?: string; email?: string; direccion?: string; observaciones?: string }) =>
-    request<{ id_proveedor: number; ruc_ci: string; razon_social: string }>('/proveedores', {
+    request<{ id_proveedor: number; ruc_ci: string; razon_social: string; telefono?: string; email?: string; direccion?: string; observaciones?: string }>('/proveedores', {
       method: 'POST',
       body: JSON.stringify(data)
     }),
+  actualizarProveedor: (
+    id_proveedor: number,
+    data: { ruc_ci?: string; razon_social?: string; telefono?: string; email?: string; direccion?: string; observaciones?: string }
+  ) =>
+    request<{ id_proveedor: number; ruc_ci: string; razon_social: string; telefono?: string; email?: string; direccion?: string; observaciones?: string }>(
+      `/proveedores/${id_proveedor}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      }
+    ),
   eliminarProveedor: (id_proveedor: number) =>
     request<{ success: boolean }>(`/proveedores/${id_proveedor}`, {
       method: 'DELETE'

@@ -72,6 +72,14 @@ class ProveedorCreate(BaseModel):
     direccion: Optional[str] = None
     observaciones: Optional[str] = None
 
+class ProveedorUpdate(BaseModel):
+    ruc_ci: Optional[str] = None
+    razon_social: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    direccion: Optional[str] = None
+    observaciones: Optional[str] = None
+
 # --- Product Models ---
 class CodigoBarrasItem(BaseModel):
     id_codigo: Optional[int] = None

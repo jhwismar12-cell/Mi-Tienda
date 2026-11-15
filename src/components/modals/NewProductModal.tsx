@@ -8,7 +8,13 @@ import { BarcodeCameraModal } from './BarcodeCameraModal';
 import { ProviderSelectorField } from './ProviderSelectorField';
 
 export const NewProductModal: React.FC = () => {
-  const { isNewProductModalOpen, setIsNewProductModalOpen, addProduct, products } = useStore();
+  const {
+    isNewProductModalOpen,
+    setIsNewProductModalOpen,
+    newProductPrefillBarcode,
+    addProduct,
+    products
+  } = useStore();
   const categories = useStoreCategories(isNewProductModalOpen, products);
   const { providers, addLocalProvider } = useStoreProviders(isNewProductModalOpen, products);
 
@@ -28,6 +34,37 @@ export const NewProductModal: React.FC = () => {
   const [minStock, setMinStock] = useState('5');
   const [isSaving, setIsSaving] = useState(false);
   const savingProduct = useRef(false);
+  const wasOpenRef = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    if (isNewProductModalOpen && !wasOpenRef.current) {
+      setName('');
+      setCode('');
+      setBarcode(newProductPrefillBarcode || '');
+      setProviderId(undefined);
+      setDistributor(undefined);
+      setUnit('UNIDAD');
+      setAllowFraction(false);
+      setDescription('');
+      setCostPrice('1.00');
+      setSalePrice('1.50');
+      setStock('20');
+      setMinStock('5');
+      if (newProductPrefillBarcode) {
+        focusTimer = setTimeout(() => {
+          nameInputRef.current?.focus();
+        }, 50);
+      }
+    }
+    wasOpenRef.current = isNewProductModalOpen;
+    return () => {
+      if (focusTimer !== undefined) {
+        clearTimeout(focusTimer);
+      }
+    };
+  }, [isNewProductModalOpen, newProductPrefillBarcode]);
 
   useEffect(() => {
     if (categories.length > 0 && !categories.includes(category)) {
@@ -95,13 +132,24 @@ export const NewProductModal: React.FC = () => {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs md:text-sm overflow-y-auto flex-1 min-h-0">
+          {newProductPrefillBarcode && (
+            <div className="bg-[var(--ui-brand-soft)] border border-[var(--ui-brand-soft-border)] rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs text-[var(--ui-brand-strong)]">
+              <span>Código escaneado listo para registrar:</span>
+              <span className="font-mono font-bold bg-[var(--ui-surface)] px-2 py-0.5 rounded border border-[var(--ui-brand-soft-border)]">
+                {newProductPrefillBarcode}
+              </span>
+            </div>
+          )}
+
           <div>
             <label className="block font-bold text-[var(--ui-text)] mb-1">
               Nombre del Producto <span className="text-[var(--ui-danger-text)]">*</span>
             </label>
             <input
+              ref={nameInputRef}
               type="text"
               required
+              aria-label="Nombre del producto"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: Leche Entera 1 Litro"
@@ -129,6 +177,7 @@ export const NewProductModal: React.FC = () => {
               <div className="flex items-stretch gap-2">
                 <input
                   type="text"
+                  aria-label="Código de barras"
                   value={barcode}
                   onChange={(e) => setBarcode(e.target.value)}
                   placeholder="Opcional"

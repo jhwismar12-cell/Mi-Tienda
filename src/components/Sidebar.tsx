@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ShoppingBag,
   Package,
+  Building2,
   History,
   BarChart3,
   Settings,
@@ -25,6 +26,7 @@ interface SidebarProps {
 const NAV_ITEMS_DEF: { id: ScreenType; label: string; shortLabel: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'pos', label: 'Punto de Venta', shortLabel: 'Venta', icon: ShoppingBag },
   { id: 'inventory', label: 'Inventario', shortLabel: 'Inventario', icon: Package },
+  { id: 'providers', label: 'Distribuidores', shortLabel: 'Distribuidores', icon: Building2 },
   { id: 'orders', label: 'Agenda de Pedidos', shortLabel: 'Pedidos', icon: CalendarCheck },
   { id: 'reception', label: 'Recepción de Mercancía', shortLabel: 'Recepción', icon: Truck },
   { id: 'kardex', label: 'Kardex', shortLabel: 'Kardex', icon: History },
@@ -193,7 +195,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ onOpenMore }) 
   const { activeScreen, setActiveScreen, purchaseOrders } = useStore();
   const pendingOrdersCount = purchaseOrders.filter(o => o.status === 'PENDIENTE').length;
 
-  const quickTabs = NAV_ITEMS_DEF.slice(0, 4); // Venta, Inventario, Pedidos, Recepción
+  const quickTabs = NAV_ITEMS_DEF.filter(
+    i => i.id === 'pos' || i.id === 'inventory' || i.id === 'orders' || i.id === 'reception'
+  ); // Venta, Inventario, Pedidos, Recepción
   const isOverflowActive = !quickTabs.some(t => t.id === activeScreen);
 
   return (

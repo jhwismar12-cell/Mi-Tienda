@@ -4,6 +4,7 @@ import { TopHeader } from './components/TopHeader';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { PosScreen } from './components/pos/PosScreen';
 import { InventoryScreen } from './components/inventory/InventoryScreen';
+import { ProvidersScreen } from './components/providers/ProvidersScreen';
 import { OrderPlannerScreen } from './components/orders/OrderPlannerScreen';
 import { ReceptionScreen } from './components/inventory/ReceptionScreen';
 import { KardexScreen } from './components/kardex/KardexScreen';
@@ -44,6 +45,7 @@ const MainLayout: React.FC = () => {
         <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--ui-bg)]">
           {activeScreen === 'pos' && <PosScreen />}
           {activeScreen === 'inventory' && <InventoryScreen />}
+          {activeScreen === 'providers' && <ProvidersScreen />}
           {activeScreen === 'orders' && <OrderPlannerScreen />}
           {activeScreen === 'reception' && <ReceptionScreen />}
           {activeScreen === 'kardex' && <KardexScreen />}

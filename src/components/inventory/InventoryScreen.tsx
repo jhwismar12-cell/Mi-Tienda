@@ -39,6 +39,12 @@ import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 import { useStoreProviders } from '../../utils/providers';
+import { sounds } from '../../utils/audio';
+
+function looksLikeBarcode(query: string): boolean {
+  const trimmed = query.trim();
+  return /^[0-9A-Za-z-]{4,32}$/.test(trimmed) && /\d/.test(trimmed);
+}
 
 type SortOption = 
   | 'name_asc' 
@@ -60,7 +66,9 @@ export const InventoryScreen: React.FC = () => {
     setSelectedKardexProductId,
     adjustStock,
     updateProduct,
-    setIsNewProductModalOpen,
+    openNewProductModal,
+    inventoryScanEvent,
+    clearInventoryScanEvent,
     deleteProduct,
     deleteKardexMovement,
     returnProduct,
@@ -68,6 +76,7 @@ export const InventoryScreen: React.FC = () => {
   } = useStore();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [detectedNewBarcode, setDetectedNewBarcode] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedSupplier, setSelectedSupplier] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'low' | 'out'>('all');
@@ -180,6 +189,47 @@ export const InventoryScreen: React.FC = () => {
     showToast(`Producto "${cleanName}" actualizado con éxito`);
     setEditProductModal(null);
   };
+
+  const findProductByScan = (rawCode: string): Product | undefined => {
+    const upper = rawCode.trim().toUpperCase();
+    if (!upper) return undefined;
+    return products.find(
+      p => (p.barcode && p.barcode.toUpperCase() === upper) || p.code.toUpperCase() === upper
+    );
+  };
+
+  const handleInventoryBarcodeScan = (rawCode: string) => {
+    const trimmed = rawCode.trim();
+    if (!trimmed) return;
+
+    setSearchQuery(trimmed);
+    const matched = findProductByScan(trimmed);
+    if (matched) {
+      setDetectedNewBarcode(null);
+      if (selectedCategory !== 'all') setSelectedCategory('all');
+      if (selectedSupplier !== 'all') setSelectedSupplier('all');
+      if (statusFilter !== 'all') setStatusFilter('all');
+      setSelectedKardexProductId(matched.id);
+      showToast(`Producto encontrado: ${matched.name}`);
+      return;
+    }
+
+    setDetectedNewBarcode(trimmed);
+    sounds.playErrorBeep();
+    showToast(`Código ${trimmed} no está en inventario. Puedes añadirlo ahora.`);
+  };
+
+  useEffect(() => {
+    if (!inventoryScanEvent) return;
+    handleInventoryBarcodeScan(inventoryScanEvent.code);
+    clearInventoryScanEvent();
+  }, [inventoryScanEvent]);
+
+  useEffect(() => {
+    if (detectedNewBarcode && findProductByScan(detectedNewBarcode)) {
+      setDetectedNewBarcode(null);
+    }
+  }, [products, detectedNewBarcode]);
 
   // Categories list
   const categories = STORE_CATEGORIES;
@@ -370,6 +420,17 @@ export const InventoryScreen: React.FC = () => {
     }
   };
 
+  const candidateNewBarcode = useMemo(() => {
+    if (detectedNewBarcode && !findProductByScan(detectedNewBarcode)) {
+      return detectedNewBarcode;
+    }
+    const trimmed = searchQuery.trim();
+    if (filteredProducts.length === 0 && looksLikeBarcode(trimmed) && !findProductByScan(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }, [detectedNewBarcode, searchQuery, filteredProducts.length, products]);
+
   const getSupplierBadgeStyle = (distributor?: string) => {
     if (!distributor) return 'bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] border-[var(--ui-border)]';
     if (distributor.includes('Arca')) return 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border-[var(--ui-danger-border)]';
@@ -409,7 +470,7 @@ export const InventoryScreen: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setIsNewProductModalOpen(true)}
+              onClick={() => openNewProductModal()}
               className="primary-action bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs md:text-sm font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm relative group cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -426,7 +487,19 @@ export const InventoryScreen: React.FC = () => {
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setSearchQuery(next);
+                if (detectedNewBarcode && next.trim() !== detectedNewBarcode) {
+                  setDetectedNewBarcode(null);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchQuery.trim()) {
+                  e.preventDefault();
+                  handleInventoryBarcodeScan(searchQuery);
+                }
+              }}
               placeholder="Buscar por nombre, código de factura o código de barras..."
               className="w-full pl-9 pr-24 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs md:text-sm text-[var(--ui-text)] placeholder:text-[var(--ui-subtle)] outline-none focus:border-[var(--ui-brand)] focus:bg-[var(--ui-surface)] transition-all shadow-xs"
             />
@@ -435,7 +508,10 @@ export const InventoryScreen: React.FC = () => {
               {searchQuery && (
                 <button
                   type="button"
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setDetectedNewBarcode(null);
+                  }}
                   className="p-1.5 text-[var(--ui-subtle)] hover:text-[var(--ui-text)] rounded transition-colors cursor-pointer"
                   title="Limpiar búsqueda"
                 >
@@ -470,12 +546,13 @@ export const InventoryScreen: React.FC = () => {
 
             {/* Dropdown Menu Floating On Top of Everything (z-50) */}
             {isSupplierMenuOpen && (
-              <div className="surface-card absolute left-0 top-full mt-2 w-80 sm:w-96 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl shadow-xl z-50 p-3 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150 ring-1 ring-black/5">
+              <div className="surface-card absolute left-0 top-full mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl shadow-xl z-50 p-3 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150 ring-1 ring-black/5">
                 {/* Menu Header */}
                 <div className="px-2 py-1 flex items-center justify-between border-b border-[var(--ui-border)]">
                   <div className="flex items-center gap-2 text-xs font-bold text-[var(--ui-text)]">
                     <Building2 className="w-4 h-4 text-[var(--ui-brand-strong)]" />
-                    <span>Organizar por Proveedor / Distribuidor</span>
+                    <span className="lg:hidden">Filtrar por Proveedor / Distribuidor</span>
+                    <span className="hidden lg:inline">Organizar por Proveedor / Distribuidor</span>
                   </div>
                   <button
                     type="button"
@@ -486,60 +563,62 @@ export const InventoryScreen: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Quick Sort Options */}
-                <div className="space-y-1">
-                  <div className="text-[10px] font-bold text-[var(--ui-muted)] uppercase tracking-wider px-2 pt-0.5">
-                    Modo de Organización
+                {/* Quick Sort Options (desktop only; hidden in phone/tablet menu) */}
+                <div className="hidden lg:block space-y-2.5">
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold text-[var(--ui-muted)] uppercase tracking-wider px-2 pt-0.5">
+                      Modo de Organización
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSortBy('supplier_asc');
+                        setIsSupplierMenuOpen(false);
+                        showToast('Productos organizados por Proveedor (A → Z)');
+                      }}
+                      className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
+                        sortBy === 'supplier_asc'
+                          ? 'bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-bold border border-[var(--ui-brand)]/30'
+                          : 'text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-muted)] border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-[var(--ui-brand-strong)]" />
+                        <div>
+                          <div className="font-semibold">Organizar por Proveedor (A → Z)</div>
+                          <div className="text-[10px] text-[var(--ui-muted)] font-normal">Agrupa y ordena todos los productos según su distribuidor</div>
+                        </div>
+                      </div>
+                      {sortBy === 'supplier_asc' && <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSortBy('name_asc');
+                        setIsSupplierMenuOpen(false);
+                        showToast('Productos ordenados alfabéticamente (A → Z)');
+                      }}
+                      className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
+                        sortBy === 'name_asc'
+                          ? 'bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-bold border border-[var(--ui-brand)]/30'
+                          : 'text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-muted)] border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-1.5 py-0.5 rounded">A-Z</span>
+                        <div>
+                          <div className="font-semibold">Organizar Alfabéticamente (A → Z)</div>
+                          <div className="text-[10px] text-[var(--ui-muted)] font-normal">Orden estándar por nombre de producto</div>
+                        </div>
+                      </div>
+                      {sortBy === 'name_asc' && <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />}
+                    </button>
                   </div>
-                  
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSortBy('supplier_asc');
-                      setIsSupplierMenuOpen(false);
-                      showToast('Productos organizados por Proveedor (A → Z)');
-                    }}
-                    className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
-                      sortBy === 'supplier_asc'
-                        ? 'bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-bold border border-[var(--ui-brand)]/30'
-                        : 'text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-muted)] border border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-[var(--ui-brand-strong)]" />
-                      <div>
-                        <div className="font-semibold">Organizar por Proveedor (A → Z)</div>
-                        <div className="text-[10px] text-[var(--ui-muted)] font-normal">Agrupa y ordena todos los productos según su distribuidor</div>
-                      </div>
-                    </div>
-                    {sortBy === 'supplier_asc' && <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />}
-                  </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSortBy('name_asc');
-                      setIsSupplierMenuOpen(false);
-                      showToast('Productos ordenados alfabéticamente (A → Z)');
-                    }}
-                    className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
-                      sortBy === 'name_asc'
-                        ? 'bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-bold border border-[var(--ui-brand)]/30'
-                        : 'text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-muted)] border border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-1.5 py-0.5 rounded">A-Z</span>
-                      <div>
-                        <div className="font-semibold">Organizar Alfabéticamente (A → Z)</div>
-                        <div className="text-[10px] text-[var(--ui-muted)] font-normal">Orden estándar por nombre de producto</div>
-                      </div>
-                    </div>
-                    {sortBy === 'name_asc' && <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />}
-                  </button>
+                  <div className="border-t border-[var(--ui-border)]" />
                 </div>
-
-                <div className="border-t border-[var(--ui-border)]" />
 
                 {/* Filter by Specific Supplier */}
                 <div className="space-y-1">
@@ -692,6 +771,39 @@ export const InventoryScreen: React.FC = () => {
         </div>
       </div>
 
+      {candidateNewBarcode && filteredProducts.length > 0 && (
+        <div
+          role="status"
+          className="mx-4 lg:mx-6 mt-3 px-4 py-2.5 bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs md:text-sm"
+        >
+          <div className="flex items-center gap-2 text-[var(--ui-warning-text)] font-medium">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              Código escaneado{' '}
+              <strong className="font-mono font-bold">{candidateNewBarcode}</strong>{' '}
+              no está registrado como producto exacto.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openNewProductModal(candidateNewBarcode)}
+              className="px-3 py-1.5 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Añadir producto con este código</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDetectedNewBarcode(null)}
+              className="px-2.5 py-1.5 text-xs font-semibold text-[var(--ui-secondary)] hover:text-[var(--ui-text)] cursor-pointer"
+            >
+              Ocultar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content: Table & Slide-out Kardex Drawer */}
       <div className="flex-1 flex overflow-hidden relative z-10">
         {/* Products Table Container */}
@@ -802,8 +914,48 @@ export const InventoryScreen: React.FC = () => {
             <tbody className="divide-y divide-[var(--ui-border)]">
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-[var(--ui-subtle)] text-xs md:text-sm">
-                    No se encontraron productos coincidentes con los filtros seleccionados.
+                  <td colSpan={10} className="py-10 px-4 text-center text-[var(--ui-subtle)] text-xs md:text-sm">
+                    {candidateNewBarcode ? (
+                      <div className="max-w-md mx-auto bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-2xl p-5 space-y-3 shadow-xs">
+                        <div className="w-10 h-10 mx-auto rounded-xl bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] flex items-center justify-center text-[var(--ui-warning-text)]">
+                          <ScanLine className="w-5 h-5" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-bold text-sm md:text-base text-[var(--ui-text)]">
+                            Producto nuevo detectado
+                          </p>
+                          <p className="text-xs md:text-sm text-[var(--ui-secondary)]">
+                            No existe ningún producto registrado con el código{' '}
+                            <span className="font-mono font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-2 py-0.5 rounded">
+                              {candidateNewBarcode}
+                            </span>
+                            .
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => openNewProductModal(candidateNewBarcode)}
+                            className="px-4 py-2 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold rounded-xl text-xs md:text-sm flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Añadir producto con este código</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSearchQuery('');
+                              setDetectedNewBarcode(null);
+                            }}
+                            className="px-3.5 py-2 bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)] border border-[var(--ui-border)] text-[var(--ui-secondary)] font-semibold rounded-xl text-xs md:text-sm transition-colors cursor-pointer"
+                          >
+                            Limpiar búsqueda
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span>No se encontraron productos coincidentes con los filtros seleccionados.</span>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -1509,8 +1661,7 @@ export const InventoryScreen: React.FC = () => {
             setEditBarcode(scanned);
             showToast(`Código asignado: ${scanned}`);
           } else {
-            setSearchQuery(scanned);
-            showToast(`Buscando código: ${scanned}`);
+            handleInventoryBarcodeScan(scanned);
           }
           setCameraTarget(null);
         }}

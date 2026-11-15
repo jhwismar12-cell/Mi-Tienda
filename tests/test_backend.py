@@ -872,6 +872,74 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertIsNone(upd3.json()["id_proveedor"])
         self.assertIsNone(upd3.json()["proveedor_nombre"])
 
+    def test_21_editar_proveedor_y_eliminar_producto_de_raiz(self):
+        # 1. Create distributor & linked product with barcode
+        prov_res = self.client.post("/api/proveedores", json={
+            "razon_social": "Distribuidora Original S.A.",
+            "telefono": "099111222"
+        })
+        self.assertEqual(prov_res.status_code, 200)
+        pid = prov_res.json()["id_proveedor"]
+
+        prod_res = self.client.post("/api/productos", json={
+            "id_categoria": 1,
+            "id_proveedor": pid,
+            "codigo_interno": "RAIZ-001",
+            "nombre": "Producto Prueba Raiz",
+            "precio_compra_actual": 1.0,
+            "precio_venta_actual": 1.5,
+            "stock_inicial": 5,
+            "codigos_barras": ["7869990001112"]
+        })
+        self.assertEqual(prod_res.status_code, 200)
+        prod_id = prod_res.json()["id_producto"]
+
+        # 2. Rename distributor -> rejects empty/duplicate and updates products on success
+        bad_empty = self.client.put(f"/api/proveedores/{pid}", json={"razon_social": "   "})
+        self.assertEqual(bad_empty.status_code, 400)
+
+        ren_res = self.client.put(f"/api/proveedores/{pid}", json={
+            "razon_social": "Distribuidora Renombrada",
+            "telefono": "099888777"
+        })
+        self.assertEqual(ren_res.status_code, 200)
+        self.assertEqual(ren_res.json()["razon_social"], "Distribuidora Renombrada")
+        self.assertEqual(ren_res.json()["telefono"], "099888777")
+
+        all_prods = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
+        self.assertEqual(all_prods[prod_id]["proveedor_nombre"], "Distribuidora Renombrada")
+
+        # 3. Root deletion when no sales/purchases exist -> completely removed from DB
+        del_res = self.client.delete(f"/api/productos/{prod_id}")
+        self.assertEqual(del_res.status_code, 200)
+        self.assertTrue(del_res.json()["deleted_permanently"])
+
+        all_after = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
+        self.assertNotIn(prod_id, all_after)
+        search_after = self.client.get("/api/productos/buscar?query=7869990001112").json()
+        self.assertIsNone(search_after["producto"])
+
+        # 4. If product HAS sales history -> deactivates & excludes from active listings/search
+        self.client.post("/api/compras/registrar", json={
+            "id_proveedor": 1,
+            "numero_documento": "FAC-HIST-1",
+            "items": [{"id_producto": 1, "cantidad": 2, "costo_unitario": 2.0}]
+        })
+        del_coca = self.client.post("/api/ventas/cobrar", json={
+            "metodo_pago": "EFECTIVO",
+            "monto_recibido": 10.0,
+            "items": [{"id_producto": 1, "cantidad": 1, "precio_unitario": 3.0}]
+        })
+        self.assertEqual(del_coca.status_code, 200)
+
+        del_sold = self.client.delete("/api/productos/1")
+        self.assertEqual(del_sold.status_code, 200)
+        self.assertFalse(del_sold.json()["deleted_permanently"])
+        active_ids = {p["id_producto"] for p in self.client.get("/api/productos").json()}
+        self.assertNotIn(1, active_ids)
+        search_sold = self.client.get("/api/productos/buscar?query=BEB-COC-3000").json()
+        self.assertIsNone(search_sold["producto"])
+
 if __name__ == "__main__":
     unittest.main()
 

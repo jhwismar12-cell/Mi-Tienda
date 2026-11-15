@@ -19,7 +19,7 @@ from backend.auth import (
 from backend.models import (
     LoginRequest, LoginResponse, UserInfo, CambiarClaveRequest, AsignarClaveTrabajadorRequest,
     ProductoOut, ProductoCreate, ProductoUpdate, ProductoRapidoRequest,
-    CategoriaOut, ProveedorOut, ProveedorCreate,
+    CategoriaOut, ProveedorOut, ProveedorCreate, ProveedorUpdate,
     VentaCobrarRequest, VentaOut,
     CompraRegistrarRequest, CompraOut,
     AjusteInventarioRequest, DevolucionProductoRequest, KardexMovimientoOut,
@@ -318,10 +318,7 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
 
 @app.delete("/api/productos/{id_producto}", tags=["Productos"])
 def eliminar_producto(id_producto: int):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE PRODUCTOS SET Activo = 0 WHERE IDProducto = ?", (id_producto,))
-        return {"success": True, "message": "Producto desactivado"}
+    return services.eliminar_producto(id_producto)
 
 # --- 3. POS Sales Endpoints ---
 @app.post("/api/ventas/cobrar", response_model=VentaOut, tags=["Ventas"])
@@ -618,11 +615,68 @@ def crear_proveedor(data: ProveedorCreate):
             activo=True
         )
 
+@app.put("/api/proveedores/{id_proveedor}", response_model=ProveedorOut, tags=["Auxiliares"])
+def actualizar_proveedor(id_proveedor: int, data: ProveedorUpdate):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT * FROM PROVEEDORES WHERE IDProveedor = ? AND Activo = 1",
+            (id_proveedor,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Distribuidor no encontrado.")
+
+        fields = data.model_fields_set
+        new_name = (data.razon_social or "").strip() if "razon_social" in fields else row["RazonSocial"]
+        if not new_name:
+            raise HTTPException(status_code=400, detail="El nombre del distribuidor es obligatorio.")
+
+        dup_name = cursor.execute(
+            "SELECT IDProveedor FROM PROVEEDORES WHERE LOWER(TRIM(RazonSocial)) = LOWER(?) AND IDProveedor != ? AND Activo = 1",
+            (new_name, id_proveedor)
+        ).fetchone()
+        if dup_name:
+            raise HTTPException(status_code=400, detail="Ya existe otro distribuidor con ese nombre.")
+
+        new_ruc = (
+            ((data.ruc_ci or "").strip() or row["RUC_CI"])
+            if "ruc_ci" in fields
+            else row["RUC_CI"]
+        )
+        new_telefono = data.telefono if "telefono" in fields else row["Telefono"]
+        new_email = data.email if "email" in fields else row["Email"]
+        new_direccion = data.direccion if "direccion" in fields else row["Direccion"]
+        new_obs = data.observaciones if "observaciones" in fields else row["Observaciones"]
+
+        try:
+            cursor.execute(
+                """UPDATE PROVEEDORES
+                   SET RUC_CI = ?, RazonSocial = ?, Telefono = ?, Email = ?, Direccion = ?, Observaciones = ?
+                   WHERE IDProveedor = ?""",
+                (new_ruc, new_name, new_telefono, new_email, new_direccion, new_obs, id_proveedor)
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e).upper():
+                raise HTTPException(status_code=400, detail="Ya existe otro distribuidor con ese RUC o cédula.")
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return ProveedorOut(
+            id_proveedor=id_proveedor,
+            ruc_ci=new_ruc,
+            razon_social=new_name,
+            telefono=new_telefono,
+            email=new_email,
+            direccion=new_direccion,
+            observaciones=new_obs,
+            activo=True
+        )
+
 @app.delete("/api/proveedores/{id_proveedor}", tags=["Auxiliares"])
 def eliminar_proveedor(id_proveedor: int):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE PROVEEDORES SET Activo = 0 WHERE IDProveedor = ?", (id_proveedor,))
+        cursor.execute("UPDATE PRODUCTOS SET IDProveedor = NULL WHERE IDProveedor = ?", (id_proveedor,))
         return {"success": True, "message": "Proveedor desactivado exitosamente"}
 
 @app.get("/api/configuracion", tags=["Configuracion"])

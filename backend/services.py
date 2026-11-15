@@ -29,6 +29,7 @@ def get_all_products() -> List[ProductoOut]:
                FROM PRODUCTOS p 
                LEFT JOIN CATEGORIAS c ON p.IDCategoria = c.IDCategoria
                LEFT JOIN PROVEEDORES pr ON p.IDProveedor = pr.IDProveedor
+               WHERE p.Activo = 1
                ORDER BY p.Nombre ASC"""
         )
         rows = cursor.fetchall()
@@ -81,11 +82,14 @@ def buscar_productos(query: str) -> List[ProductoOut]:
                LEFT JOIN CATEGORIAS c ON p.IDCategoria = c.IDCategoria
                LEFT JOIN PROVEEDORES pr ON p.IDProveedor = pr.IDProveedor
                LEFT JOIN PRODUCTO_CODIGOS_BARRAS b ON p.IDProducto = b.IDProducto
-               WHERE p.CodigoInterno = ? 
-                  OR b.CodigoBarras = ?
-                  OR p.Nombre LIKE ? 
-                  OR p.CodigoInterno LIKE ?
-                  OR b.CodigoBarras LIKE ?
+               WHERE p.Activo = 1
+                 AND (
+                   p.CodigoInterno = ? 
+                   OR b.CodigoBarras = ?
+                   OR p.Nombre LIKE ? 
+                   OR p.CodigoInterno LIKE ?
+                   OR b.CodigoBarras LIKE ?
+                 )
                ORDER BY (p.CodigoInterno = ? OR b.CodigoBarras = ?) DESC, p.Nombre ASC""",
             (query_str, query_str, f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", query_str, query_str)
         )
@@ -245,6 +249,54 @@ def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
             permite_fraccion=data.permite_fraccion,
             codigos_barras=data.codigos_barras
         )
+
+
+def eliminar_producto(id_producto: int) -> dict:
+    """Elimina un producto de raíz si no tiene historial comercial; si tiene ventas/compras/pedidos,
+    lo desactiva, libera sus códigos de barras y lo desvincula del distribuidor."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT IDProducto FROM PRODUCTOS WHERE IDProducto = ?",
+            (id_producto,),
+        ).fetchone()
+        if not row:
+            return {"success": True, "deleted_permanently": False, "message": "Producto no encontrado"}
+
+        has_sales = cursor.execute(
+            "SELECT 1 FROM VENTAS_DETALLE WHERE IDProducto = ? LIMIT 1",
+            (id_producto,),
+        ).fetchone()
+        has_purchases = cursor.execute(
+            "SELECT 1 FROM COMPRAS_DETALLE WHERE IDProducto = ? LIMIT 1",
+            (id_producto,),
+        ).fetchone()
+        has_orders = cursor.execute(
+            "SELECT 1 FROM PEDIDOS_DETALLE WHERE IDProducto = ? LIMIT 1",
+            (id_producto,),
+        ).fetchone()
+
+        if not has_sales and not has_purchases and not has_orders:
+            cursor.execute("DELETE FROM MOVIMIENTOS_INVENTARIO WHERE IDProducto = ?", (id_producto,))
+            cursor.execute("DELETE FROM HISTORIAL_PRECIOS WHERE IDProducto = ?", (id_producto,))
+            cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
+            cursor.execute("DELETE FROM PRODUCTOS WHERE IDProducto = ?", (id_producto,))
+            return {
+                "success": True,
+                "deleted_permanently": True,
+                "message": "Producto eliminado de raíz del inventario",
+            }
+
+        cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
+        cursor.execute(
+            "UPDATE PRODUCTOS SET Activo = 0, IDProveedor = NULL, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
+            (id_producto,),
+        )
+        return {
+            "success": True,
+            "deleted_permanently": False,
+            "message": "Producto retirado del catálogo (se mantiene en historial de ventas/compras)",
+        }
 
 # --- Cash Register Services ---
 def require_active_session(conn: sqlite3.Connection, session_id: Optional[int] = None) -> sqlite3.Row:

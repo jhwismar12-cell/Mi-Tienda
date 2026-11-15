@@ -20,6 +20,7 @@ import { BarcodeCameraModal, createBarcodeReader } from '../src/components/modal
 import { InventoryScreen } from '../src/components/inventory/InventoryScreen';
 import { Sidebar, MobileBottomNav } from '../src/components/Sidebar';
 import { TopHeader } from '../src/components/TopHeader';
+import { ProvidersScreen } from '../src/components/providers/ProvidersScreen';
 import { LoginScreen } from '../src/components/auth/LoginScreen';
 import { canAutoFocusInput } from '../src/utils/responsive';
 
@@ -1190,4 +1191,264 @@ test('LoginScreen toggles password visibility with eye button without submitting
   });
 
   assert.equal(findPwdInput().props.type, 'password');
+});
+
+test('InventoryScreen detects unknown barcode scans and opens NewProductModal pre-filled with the scanned barcode', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  const createdPayloads: any[] = [];
+  t.mock.method(api, 'getCategorias', async () => [{ id_categoria: 2, nombre: 'Bebidas' }]);
+  t.mock.method(api, 'getProveedores', async () => []);
+  t.mock.method(api, 'crearProducto', async (payload: any) => {
+    createdPayloads.push(payload);
+    return {
+      ...createdProduct('Bebidas', 2),
+      nombre: payload.nombre,
+      codigos_barras: payload.codigos_barras || []
+    };
+  });
+
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><InventoryScreen /><NewProductModal /></StoreProvider>);
+  });
+
+  // 1. Scan unknown barcode via camera button in Inventory
+  const camBtn = renderer.root.findByProps({ 'aria-label': 'Escanear código de barras para buscar' });
+  await act(async () => {
+    camBtn.props.onClick();
+  });
+  const camModal = renderer.root.findAllByType(BarcodeCameraModal).find(m => m.props.isOpen)!;
+  await act(async () => {
+    camModal.props.onDetected('7861005559991');
+  });
+
+  const addWithCodeBtn = renderer.root.findAllByType('button').find(b =>
+    b.findAllByType('span').some(s => s.children.join('') === 'Añadir producto con este código')
+  );
+  assert.ok(addWithCodeBtn, 'Expected add-product button for detected unknown barcode');
+
+  // 2. Clicking "Añadir producto con este código" opens NewProductModal pre-filled
+  await act(async () => {
+    addWithCodeBtn!.props.onClick();
+  });
+  assert.equal(store.isNewProductModalOpen, true);
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Código de barras' }).props.value, '7861005559991');
+
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Nombre del producto' }).props.onChange({
+      target: { value: 'Jugo Naranja 1L' }
+    });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(store.isNewProductModalOpen, false);
+  assert.deepEqual(createdPayloads[0].codigos_barras, ['7861005559991']);
+
+  // 3. Re-opening via normal "Nuevo Producto" button starts with empty barcode
+  const newProdHeaderBtn = renderer.root.findAllByType('button').find(b =>
+    b.findAllByType('span').some(s => s.children.join('') === 'Nuevo Producto')
+  );
+  await act(async () => {
+    newProdHeaderBtn!.props.onClick();
+  });
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Código de barras' }).props.value, '');
+
+  // Close and test USB/keyboard Enter scan in Inventory search bar
+  await act(async () => {
+    store.setIsNewProductModalOpen(false);
+  });
+  const searchInput = renderer.root.findByProps({
+    placeholder: 'Buscar por nombre, código de factura o código de barras...'
+  });
+  await act(async () => {
+    searchInput.props.onChange({ target: { value: '7861007778882' } });
+  });
+  await act(async () => {
+    searchInput.props.onKeyDown({ key: 'Enter', preventDefault() {} });
+  });
+  const enterAddBtn = renderer.root.findAllByType('button').find(b =>
+    b.findAllByType('span').some(s => s.children.join('') === 'Añadir producto con este código')
+  );
+  assert.ok(enterAddBtn);
+  await act(async () => {
+    enterAddBtn!.props.onClick();
+  });
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Código de barras' }).props.value, '7861007778882');
+});
+
+test('global USB scanner in Inventory tab detects new product without triggering POS AltaAlVuelo', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  const listeners = new Map<string, (e: any) => void>();
+  (globalThis as any).window = {
+    addEventListener(evt: string, fn: (e: any) => void) {
+      listeners.set(evt, fn);
+    },
+    removeEventListener(evt: string) {
+      listeners.delete(evt);
+    }
+  };
+  t.mock.method(api, 'getCategorias', async () => [{ id_categoria: 2, nombre: 'Bebidas' }]);
+  t.mock.method(api, 'getProveedores', async () => []);
+
+  // Re-mount StoreProvider cleanly so its global keydown effect attaches to our mocked window
+  let invStore!: StoreContextType;
+  function InvProbe() { invStore = useStore(); return null; }
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(<StoreProvider><InvProbe /><InventoryScreen /><NewProductModal /></StoreProvider>);
+  });
+  await act(async () => {
+    invStore.setActiveScreen('inventory');
+  });
+
+  const keydown = listeners.get('keydown');
+  assert.ok(keydown, 'Expected global keydown listener');
+
+  await act(async () => {
+    for (const ch of '7869991112223') {
+      keydown!({ key: ch, target: { tagName: 'BODY' }, preventDefault() {} });
+    }
+    keydown!({ key: 'Enter', target: { tagName: 'BODY' }, preventDefault() {} });
+  });
+
+  assert.equal(invStore.isAltaAlVueloOpen, false);
+  const addWithCodeBtn = renderer.root.findAllByType('button').find(b =>
+    b.findAllByType('span').some(s => s.children.join('') === 'Añadir producto con este código')
+  );
+  assert.ok(addWithCodeBtn, 'Expected new product button from global Inventory USB scan');
+
+  await act(async () => {
+    addWithCodeBtn!.props.onClick();
+  });
+  assert.equal(invStore.isNewProductModalOpen, true);
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Código de barras' }).props.value, '7869991112223');
+});
+
+test('Sidebar includes Distribuidores tab, ProvidersScreen renames distributor and permanently removes products, and Inventory mobile menu hides sort modes', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  let updatedProvPayload: any = null;
+  let deletedProdId: number | null = null;
+
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 10, ruc_ci: '1790001112001', razon_social: 'Distribuidora Alfa', telefono: '099111222' }
+  ]);
+  t.mock.method(api, 'actualizarProveedor', async (id: number, payload: any) => {
+    updatedProvPayload = { id, payload };
+    return {
+      id_proveedor: id,
+      ruc_ci: payload.ruc_ci || '1790001112001',
+      razon_social: payload.razon_social,
+      telefono: payload.telefono
+    };
+  });
+  t.mock.method(api, 'eliminarProducto', async (id: number) => {
+    deletedProdId = id;
+    return { success: true, deleted_permanently: true, message: 'Producto eliminado de raíz del inventario' } as any;
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  t.mock.method(api, 'getProductos', async () => [
+    {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 15,
+      codigo_interno: 'ALF-01',
+      nombre: 'Fideo Alfa 400g',
+      id_proveedor: 10,
+      proveedor_nombre: 'Distribuidora Alfa'
+    }
+  ]);
+
+  let provStore!: StoreContextType;
+  function ProvProbe() { provStore = useStore(); return null; }
+
+  // 1. Sidebar drawer includes Distribuidores tab and switches activeScreen to 'providers'
+  let drawerClosed = false;
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <ProvProbe />
+        <Sidebar isMobileOpen={true} onCloseMobile={() => { drawerClosed = true; }} />
+        <ProvidersScreen />
+      </StoreProvider>
+    );
+  });
+
+  const distNavBtn = renderer.root.findAllByType('button').find((b) => textOf(b).trim() === 'Distribuidores');
+  assert.ok(distNavBtn, 'Expected Distribuidores tab in sidebar drawer');
+  await act(async () => {
+    distNavBtn!.props.onClick();
+  });
+  assert.equal(provStore.activeScreen, 'providers');
+  assert.equal(drawerClosed, true);
+
+  // 2. Rename distributor from ProvidersScreen and confirm products reflect new distributor name
+  const editProvBtn = renderer.root.findByProps({ 'aria-label': 'Editar distribuidor Distribuidora Alfa' });
+  await act(async () => {
+    editProvBtn.props.onClick({ stopPropagation() {} });
+  });
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Nombre del distribuidor' }).props.onChange({
+      target: { value: 'Distribuidora Alfa Renovada' }
+    });
+  });
+  await act(async () => {
+    await renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(updatedProvPayload.id, 10);
+  assert.equal(updatedProvPayload.payload.razon_social, 'Distribuidora Alfa Renovada');
+  assert.equal(provStore.products[0].distributor, 'Distribuidora Alfa Renovada');
+
+  // 3. Select distributor -> view product -> click Eliminar -> confirm root deletion
+  const provCard = renderer.root.findAllByType('div').find(
+    (d) => d.props.role === 'button' && textOf(d).includes('Distribuidora Alfa Renovada')
+  );
+  assert.ok(provCard, 'Expected distributor card with updated name');
+  await act(async () => {
+    provCard!.props.onClick();
+  });
+
+  const delBtn = renderer.root.findByProps({ 'aria-label': 'Eliminar producto Fideo Alfa 400g' });
+  await act(async () => {
+    delBtn.props.onClick();
+  });
+  const confirmDelBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Sí, eliminar de raíz'));
+  assert.ok(confirmDelBtn, 'Expected confirmation button for permanent product deletion');
+  await act(async () => {
+    await confirmDelBtn!.props.onClick();
+  });
+
+  assert.equal(deletedProdId, 15);
+  assert.equal(provStore.products.length, 0);
+
+  // 4. InventoryScreen dropdown hides sort options ("Modo de Organización") on phone/tablet (< lg)
+  await act(async () => {
+    renderer.update(<StoreProvider><ProvProbe /><InventoryScreen /></StoreProvider>);
+  });
+  const menuBtn = renderer.root.findByProps({ title: 'Organizar por proveedor o alfabéticamente' });
+  await act(async () => {
+    menuBtn.props.onClick();
+  });
+  const sortContainer = renderer.root.findAllByType('div').find(
+    (d) => typeof d.props.className === 'string' && d.props.className.includes('hidden lg:block') && textOf(d).includes('Organizar por Proveedor (A')
+  );
+  assert.ok(sortContainer, 'Expected Modo de Organización options to be wrapped with hidden lg:block for phone menu');
 });

@@ -6,6 +6,10 @@ export interface StoreProviderOption {
   id_proveedor: number;
   ruc_ci: string;
   razon_social: string;
+  telefono?: string;
+  email?: string;
+  direccion?: string;
+  observaciones?: string;
 }
 
 /**
@@ -13,7 +17,15 @@ export interface StoreProviderOption {
  * deduplicating by id_proveedor and sorting alphabetically (Spanish locale).
  */
 export function mergeProviderOptions(
-  remote: Array<{ id_proveedor: number; ruc_ci?: string; razon_social: string }>,
+  remote: Array<{
+    id_proveedor: number;
+    ruc_ci?: string;
+    razon_social: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+    observaciones?: string;
+  }>,
   products: Product[]
 ): StoreProviderOption[] {
   const byId = new Map<number, StoreProviderOption>();
@@ -35,7 +47,11 @@ export function mergeProviderOptions(
       byId.set(r.id_proveedor, {
         id_proveedor: r.id_proveedor,
         ruc_ci: r.ruc_ci || '',
-        razon_social: name
+        razon_social: name,
+        telefono: r.telefono,
+        email: r.email,
+        direccion: r.direccion,
+        observaciones: r.observaciones
       });
     }
   }
@@ -58,7 +74,6 @@ export function useStoreProviders(isOpen: boolean, products: Product[]) {
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
-    setProviders(prev => mergeProviderOptions(prev, products));
     setIsLoading(true);
 
     api
@@ -77,6 +92,11 @@ export function useStoreProviders(isOpen: boolean, products: Product[]) {
     return () => {
       active = false;
     };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setProviders(prev => mergeProviderOptions(prev, products));
   }, [isOpen, products]);
 
   const addLocalProvider = useCallback(
@@ -86,5 +106,19 @@ export function useStoreProviders(isOpen: boolean, products: Product[]) {
     [products]
   );
 
-  return { providers, isLoading, addLocalProvider };
+  const updateLocalProvider = useCallback(
+    (updated: StoreProviderOption) => {
+      setProviders(prev => {
+        const replaced = prev.some(p => p.id_proveedor === updated.id_proveedor)
+          ? prev.map(p => (p.id_proveedor === updated.id_proveedor ? updated : p))
+          : [...prev, updated];
+        return replaced.sort((a, b) =>
+          a.razon_social.localeCompare(b.razon_social, 'es', { sensitivity: 'base' })
+        );
+      });
+    },
+    []
+  );
+
+  return { providers, isLoading, addLocalProvider, updateLocalProvider };
 }
