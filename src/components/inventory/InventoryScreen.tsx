@@ -37,6 +37,7 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product, Category, KardexMovement, STORE_CATEGORIES } from '../../types';
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
+import { DeleteProductModal } from '../modals/DeleteProductModal';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 import { useStoreProviders } from '../../utils/providers';
 import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
@@ -129,6 +130,8 @@ export const InventoryScreen: React.FC = () => {
   const [editUnit, setEditUnit] = useState<string>('UNIDAD');
   const [editAllowFraction, setEditAllowFraction] = useState<boolean>(false);
   const [editDescription, setEditDescription] = useState<string>('');
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [isDeletingProduct, setIsDeletingProduct] = useState(false);
   const { providers: editProviders, addLocalProvider: addLocalEditProvider } = useStoreProviders(
     Boolean(editProductModal),
     products
@@ -189,6 +192,27 @@ export const InventoryScreen: React.FC = () => {
 
     showToast(`Producto "${cleanName}" actualizado con éxito`);
     setEditProductModal(null);
+  };
+
+  const openDeleteModal = (product: Product, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setProductToDelete(product);
+  };
+
+  const handleConfirmDeleteProduct = async () => {
+    if (!productToDelete || isDeletingProduct) return;
+    setIsDeletingProduct(true);
+    try {
+      await deleteProduct(productToDelete.id);
+      if (editProductModal?.id === productToDelete.id) {
+        setEditProductModal(null);
+      }
+      setProductToDelete(null);
+    } catch {
+      // StoreContext already notifies ApiError
+    } finally {
+      setIsDeletingProduct(false);
+    }
   };
 
   const findProductByScan = (rawCode: string): Product | undefined => {
@@ -1081,7 +1105,7 @@ export const InventoryScreen: React.FC = () => {
                       </td>
 
                       {/* 10. Quick Actions */}
-                      <td className="px-3 py-3 text-center space-x-1">
+                      <td className="px-3 py-3 text-center space-x-1 whitespace-nowrap">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1099,6 +1123,16 @@ export const InventoryScreen: React.FC = () => {
                           title="Editar Código de Barras y Precio"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => openDeleteModal(product, e)}
+                          aria-label={`Eliminar producto ${product.name}`}
+                          className="p-1.5 text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] rounded-lg transition-colors inline-block cursor-pointer"
+                          title="Eliminar producto de raíz"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -1206,6 +1240,17 @@ export const InventoryScreen: React.FC = () => {
               >
                 <Edit2 className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
                 <span>Editar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => openDeleteModal(selectedProduct, e)}
+                aria-label={`Eliminar producto ${selectedProduct.name} del catálogo`}
+                className="flex-1 py-1.5 px-2 bg-[var(--ui-danger-bg)] hover:bg-[var(--ui-danger-solid)] border border-[var(--ui-danger-border)] text-[var(--ui-danger-text)] hover:text-white font-bold text-xs rounded-lg flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                title="Eliminar producto de raíz"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Eliminar</span>
               </button>
             </div>
 
@@ -1654,6 +1699,13 @@ export const InventoryScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      <DeleteProductModal
+        product={productToDelete}
+        isDeleting={isDeletingProduct}
+        onClose={() => setProductToDelete(null)}
+        onConfirm={handleConfirmDeleteProduct}
+      />
 
       <BarcodeCameraModal
         isOpen={cameraTarget !== null}

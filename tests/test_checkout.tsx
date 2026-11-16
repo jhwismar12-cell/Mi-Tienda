@@ -1740,3 +1740,97 @@ test('Cost inputs support 4 decimal places across InventoryScreen, NewProductMod
   assert.equal(purchasePayload.items[0].cantidad, 20);
   assert.equal(purchasePayload.items[0].costo_unitario, 1.3043);
 });
+
+test('InventoryScreen lets user delete products from table row and Kardex drawer via confirmation modal', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  const deletedIds: number[] = [];
+  t.mock.method(api, 'getProductos', async () => [
+    {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 31,
+      codigo_interno: 'INV-31',
+      nombre: 'Producto Tabla Uno',
+      codigos_barras: ['7861000000311']
+    },
+    {
+      ...createdProduct('Bebidas', 2),
+      id_producto: 32,
+      codigo_interno: 'INV-32',
+      nombre: 'Producto Kardex Dos',
+      codigos_barras: ['7861000000328']
+    }
+  ]);
+  t.mock.method(api, 'eliminarProducto', async (id: number) => {
+    deletedIds.push(id);
+    return { success: true, deleted_permanently: true, message: 'Producto eliminado de raíz' } as any;
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  let invDelStore!: StoreContextType;
+  function InvDelProbe() { invDelStore = useStore(); return null; }
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <InvDelProbe />
+        <InventoryScreen />
+      </StoreProvider>
+    );
+  });
+
+  assert.equal(invDelStore.products.length, 2);
+
+  // 1. Delete first product from table row action button -> cancel first, then confirm
+  const rowDelBtn = renderer.root.findByProps({ 'aria-label': 'Eliminar producto Producto Tabla Uno' });
+  await act(async () => {
+    rowDelBtn.props.onClick({ stopPropagation() {} });
+  });
+  assert.ok(textOf(renderer.root).includes('Eliminar Producto de Raíz'));
+  assert.ok(textOf(renderer.root).includes('Producto Tabla Uno'));
+
+  const cancelBtn = renderer.root.findAllByType('button').find((b) => textOf(b).trim() === 'Cancelar');
+  await act(async () => {
+    cancelBtn!.props.onClick();
+  });
+  assert.equal(invDelStore.products.length, 2);
+  assert.deepEqual(deletedIds, []);
+
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Eliminar producto Producto Tabla Uno' }).props.onClick({ stopPropagation() {} });
+  });
+  const confirmBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Sí, eliminar de raíz'));
+  await act(async () => {
+    await confirmBtn!.props.onClick();
+  });
+  assert.deepEqual(deletedIds, [31]);
+  assert.equal(invDelStore.products.length, 1);
+  assert.equal(invDelStore.selectedKardexProductId, null);
+
+  // 2. Open Kardex drawer on second product and delete from Kardex Quick Actions
+  await act(async () => {
+    invDelStore.setSelectedKardexProductId('32');
+  });
+  const drawerDelBtn = renderer.root.findByProps({ 'aria-label': 'Eliminar producto Producto Kardex Dos del catálogo' });
+  await act(async () => {
+    drawerDelBtn.props.onClick({ stopPropagation() {} });
+  });
+  const confirmDrawerDelBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Sí, eliminar de raíz'));
+  await act(async () => {
+    await confirmDrawerDelBtn!.props.onClick();
+  });
+
+  assert.deepEqual(deletedIds, [31, 32]);
+  assert.equal(invDelStore.products.length, 0);
+  assert.equal(invDelStore.selectedKardexProductId, null);
+});
