@@ -24,8 +24,15 @@ import {
   Printer
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
+import { api } from '../../services/api';
 import { Product, PurchaseOrder, PurchaseOrderItem } from '../../types';
 import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
+import {
+  OrderArrivalState,
+  buildReceptionItemsFromOrder,
+  countOrderArrivalStates,
+  cycleOrderArrivalState
+} from '../../utils/orderArrival';
 
 export const OrderPlannerScreen: React.FC = () => {
   const {
@@ -33,6 +40,7 @@ export const OrderPlannerScreen: React.FC = () => {
     purchaseOrders,
     createPurchaseOrder,
     deletePurchaseOrder,
+    receiveOrderInStock,
     setSelectedOrderForReception,
     setActiveScreen,
     showToast
@@ -41,6 +49,9 @@ export const OrderPlannerScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'received' | 'all'>('pending');
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedOrders, setCollapsedOrders] = useState<Record<string, boolean>>({});
+  const [arrivalByOrder, setArrivalByOrder] = useState<Record<string, Record<string, OrderArrivalState>>>({});
+  const [submittingOrderId, setSubmittingOrderId] = useState<string | null>(null);
 
   // Modal: Crear Nuevo Pedido
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -207,6 +218,90 @@ export const OrderPlannerScreen: React.FC = () => {
     showToast(`📦 Pedido #${order.orderNumber} empaquetado y cargado en Recepción de Mercancía.`);
   };
 
+  const getOrderItemKey = (item: PurchaseOrderItem, idx: number) =>
+    item.id || item.productId || String(idx);
+
+  const toggleOrderExpanded = (orderId: string) => {
+    setCollapsedOrders(prev => ({ ...prev, [orderId]: !prev[orderId] }));
+  };
+
+  const handleCycleOrderItem = (orderId: string, itemKey: string) => {
+    setArrivalByOrder(prev => {
+      const orderMap = prev[orderId] || {};
+      return {
+        ...prev,
+        [orderId]: {
+          ...orderMap,
+          [itemKey]: cycleOrderArrivalState(orderMap[itemKey])
+        }
+      };
+    });
+  };
+
+  const handleMarkAllArrived = (order: PurchaseOrder) => {
+    const orderMap = arrivalByOrder[order.id] || {};
+    const keys = order.items.map((it, idx) => getOrderItemKey(it, idx));
+    const allGreen = keys.length > 0 && keys.every(k => orderMap[k] === 'arrived');
+    if (allGreen) {
+      setArrivalByOrder(prev => ({ ...prev, [order.id]: {} }));
+      return;
+    }
+    const next: Record<string, OrderArrivalState> = {};
+    for (const k of keys) next[k] = 'arrived';
+    setArrivalByOrder(prev => ({ ...prev, [order.id]: next }));
+  };
+
+  const handleDirectSendToInventory = async (order: PurchaseOrder) => {
+    if (submittingOrderId) return;
+    const orderMap = arrivalByOrder[order.id] || {};
+    const receivedItems = buildReceptionItemsFromOrder(order, products, orderMap);
+    if (receivedItems.length === 0) {
+      showToast('⚠️ Marca al menos un producto en verde (1 toque) antes de enviar a inventario.');
+      return;
+    }
+
+    let resolvedProviderId =
+      order.providerId ||
+      products.find(
+        p =>
+          typeof p.providerId === 'number' &&
+          p.distributor?.trim().toLowerCase() === order.providerName.trim().toLowerCase()
+      )?.providerId;
+
+    if (!resolvedProviderId) {
+      try {
+        const providers = await api.getProveedores();
+        const match = providers.find(
+          p => p.razon_social.trim().toLowerCase() === order.providerName.trim().toLowerCase()
+        );
+        if (match) resolvedProviderId = match.id_proveedor;
+      } catch {
+        // Fallback handled below
+      }
+    }
+
+    if (!resolvedProviderId) {
+      handleSendToReception(order);
+      showToast('Selecciona o confirma el proveedor en Recepción para completar el ingreso.');
+      return;
+    }
+
+    const docNum = `FAC-${Date.now().toString().slice(-6)}`;
+    setSubmittingOrderId(order.id);
+    try {
+      await receiveOrderInStock(order.id, docNum, receivedItems, order.providerName, resolvedProviderId);
+      setArrivalByOrder(prev => {
+        const next = { ...prev };
+        delete next[order.id];
+        return next;
+      });
+    } catch {
+      // Errors are surfaced via StoreContext toast
+    } finally {
+      setSubmittingOrderId(null);
+    }
+  };
+
   const getSupplierBadgeStyle = (distributor?: string) => {
     if (!distributor) return 'bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] border-[var(--ui-border)]';
     if (distributor.includes('Arca')) return 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border-[var(--ui-danger-border)]';
@@ -349,6 +444,10 @@ export const OrderPlannerScreen: React.FC = () => {
             {filteredOrders.map(order => {
               const isPending = order.status === 'PENDIENTE';
               const isReceived = order.status === 'RECIBIDO';
+              const orderMap = arrivalByOrder[order.id] || {};
+              const itemKeys = order.items.map((it, idx) => getOrderItemKey(it, idx));
+              const { arrivedCount, missingCount } = countOrderArrivalStates(itemKeys, orderMap);
+              const isExpanded = !collapsedOrders[order.id];
 
               return (
                 <div
@@ -364,9 +463,23 @@ export const OrderPlannerScreen: React.FC = () => {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <span className="font-mono text-xs font-bold text-[var(--ui-text)] bg-[var(--ui-surface-hover)] px-2 py-0.5 rounded">
-                            {order.orderNumber}
-                          </span>
+                          {isPending ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleOrderExpanded(order.id)}
+                              aria-label={`Desplegar paquete ${order.orderNumber}`}
+                              className="inline-flex items-center gap-1 font-mono text-xs font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand-soft)] border border-[var(--ui-brand-soft-border)] px-2 py-0.5 rounded hover:opacity-90 transition-opacity cursor-pointer"
+                              title="Clic para abrir o contraer la lista de productos del paquete"
+                            >
+                              <Package className="w-3.5 h-3.5" />
+                              <span>{order.orderNumber}</span>
+                              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            </button>
+                          ) : (
+                            <span className="font-mono text-xs font-bold text-[var(--ui-text)] bg-[var(--ui-surface-hover)] px-2 py-0.5 rounded">
+                              {order.orderNumber}
+                            </span>
+                          )}
                           <span className={`status-pill px-2 py-0.5 rounded text-xs font-semibold border ${getSupplierBadgeStyle(order.providerName)}`}>
                             {order.providerName}
                           </span>
@@ -423,37 +536,141 @@ export const OrderPlannerScreen: React.FC = () => {
                   </div>
 
                   {/* Order Items Table / List */}
-                  <div className="p-4 flex-1">
-                    <div className="workspace-eyebrow text-xs font-semibold text-[var(--ui-muted)] mb-2 flex justify-between">
-                      <span>Productos Solicitados ({order.items.length} ítems)</span>
-                      <span>Cant. Pedida</span>
-                    </div>
+                  {isExpanded && (
+                    <div className="p-4 flex-1">
+                      <div className="workspace-eyebrow text-xs font-semibold text-[var(--ui-muted)] mb-1.5 flex items-center justify-between gap-2 flex-wrap">
+                        <span>Productos Solicitados ({order.items.length} ítems)</span>
+                        {isPending ? (
+                          <button
+                            type="button"
+                            onClick={() => handleMarkAllArrived(order)}
+                            className="text-[11px] font-bold text-[var(--ui-brand-strong)] hover:underline cursor-pointer normal-case tracking-normal"
+                          >
+                            {arrivedCount === order.items.length && order.items.length > 0
+                              ? 'Limpiar marcas'
+                              : 'Marcar todos ✓'}
+                          </button>
+                        ) : (
+                          <span>Cant. Pedida</span>
+                        )}
+                      </div>
 
-                    <div className="max-h-48 overflow-y-auto space-y-1.5 divide-y divide-[var(--ui-border)] pr-1">
-                      {order.items.map((item, idx) => (
-                        <div key={item.id || idx} className="pt-1.5 flex items-center justify-between text-xs">
-                          <div className="overflow-hidden pr-2">
-                            <div className="font-semibold text-[var(--ui-text)] truncate">{item.name}</div>
-                            <div className="font-mono text-[10px] text-[var(--ui-muted)]">
-                              Cód: {item.code} • Costo Ref: ${formatCostPrice(item.estimatedCost)}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <span className="font-mono font-black text-xs text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-2 py-0.5 rounded">
-                              {item.quantityOrdered} un
-                            </span>
-                            <div className="font-mono text-[10px] text-[var(--ui-muted)] mt-0.5">
-                              ${item.subtotal.toFixed(2)}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                      {isPending && (
+                        <p className="text-[11px] text-[var(--ui-muted)] mb-2">
+                          Toca cada producto: <strong className="text-[var(--ui-brand-strong)]">1 toque = ✓ Verde (llegó)</strong> · <strong className="text-[var(--ui-danger-text)]">2 toques = ✕ Rojo (no llegó)</strong>
+                        </p>
+                      )}
+
+                      <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                        {order.items.map((item, idx) => {
+                          const itemKey = getOrderItemKey(item, idx);
+                          const arrivalState: OrderArrivalState = orderMap[itemKey] || 'pending';
+
+                          if (!isPending) {
+                            return (
+                              <div key={itemKey} className="pt-1.5 border-t first:border-t-0 border-[var(--ui-border)] flex items-center justify-between text-xs">
+                                <div className="overflow-hidden pr-2">
+                                  <div className="font-semibold text-[var(--ui-text)] truncate">{item.name}</div>
+                                  <div className="font-mono text-[10px] text-[var(--ui-muted)]">
+                                    Cód: {item.code} • Costo Ref: ${formatCostPrice(item.estimatedCost)}
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-mono font-black text-xs text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-2 py-0.5 rounded">
+                                    {item.quantityOrdered} un
+                                  </span>
+                                  <div className="font-mono text-[10px] text-[var(--ui-muted)] mt-0.5">
+                                    ${item.subtotal.toFixed(2)}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          const isArrived = arrivalState === 'arrived';
+                          const isMissing = arrivalState === 'missing';
+
+                          return (
+                            <button
+                              key={itemKey}
+                              type="button"
+                              onClick={() => handleCycleOrderItem(order.id, itemKey)}
+                              aria-label={`Marcar llegada de ${item.name} en ${order.orderNumber}`}
+                              data-arrival-state={arrivalState}
+                              className={`w-full text-left p-2 rounded-xl border flex items-center justify-between gap-2 text-xs transition-all cursor-pointer ${
+                                isArrived
+                                  ? 'bg-[var(--ui-brand-soft)] border-[var(--ui-brand)] shadow-2xs'
+                                  : isMissing
+                                  ? 'bg-[var(--ui-danger-bg)] border-[var(--ui-danger-border)]'
+                                  : 'bg-[var(--ui-surface)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span
+                                  className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 border ${
+                                    isArrived
+                                      ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)]'
+                                      : isMissing
+                                      ? 'bg-[var(--ui-danger-solid)] text-white border-[var(--ui-danger-solid)]'
+                                      : 'bg-[var(--ui-surface-muted)] text-[var(--ui-subtle)] border-[var(--ui-border)]'
+                                  }`}
+                                >
+                                  {isArrived ? '✓' : isMissing ? '✕' : '•'}
+                                </span>
+                                <div className="overflow-hidden min-w-0">
+                                  <div
+                                    className={`font-semibold truncate ${
+                                      isMissing
+                                        ? 'line-through text-[var(--ui-danger-text)]'
+                                        : isArrived
+                                        ? 'text-[var(--ui-brand-strong)]'
+                                        : 'text-[var(--ui-text)]'
+                                    }`}
+                                  >
+                                    {item.name}
+                                  </div>
+                                  <div className="font-mono text-[10px] text-[var(--ui-muted)]">
+                                    Cód: {item.code} • Costo Ref: ${formatCostPrice(item.estimatedCost)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
+                                <span
+                                  className={`font-mono font-black text-xs px-2 py-0.5 rounded ${
+                                    isMissing
+                                      ? 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border border-[var(--ui-danger-border)]'
+                                      : 'text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10'
+                                  }`}
+                                >
+                                  {item.quantityOrdered} un
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold ${
+                                    isArrived
+                                      ? 'text-[var(--ui-brand-strong)]'
+                                      : isMissing
+                                      ? 'text-[var(--ui-danger-text)]'
+                                      : 'text-[var(--ui-subtle)]'
+                                  }`}
+                                >
+                                  {isArrived
+                                    ? 'Llegó'
+                                    : isMissing
+                                    ? 'No llegó'
+                                    : `$${Number(item.subtotal ?? item.quantityOrdered * item.estimatedCost).toFixed(2)}`}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Card Footer: Summary & Dispatch Button */}
                   <div className="p-4 bg-[var(--ui-surface-muted)] border-t border-[var(--ui-border)] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 font-mono text-xs">
+                    <div className="flex items-center gap-3 font-mono text-xs flex-wrap">
                       <div>
                         <div className="text-[10px] text-[var(--ui-muted)] font-sans">Total Unidades</div>
                         <div className="font-black text-sm text-[var(--ui-text)]">{order.totalUnits} un</div>
@@ -463,17 +680,56 @@ export const OrderPlannerScreen: React.FC = () => {
                         <div className="text-[10px] text-[var(--ui-muted)] font-sans">Presupuesto Est.</div>
                         <div className="font-black text-sm text-[var(--ui-brand-strong)]">${order.totalAmount.toFixed(2)}</div>
                       </div>
+                      {isPending && (arrivedCount > 0 || missingCount > 0) && (
+                        <>
+                          <div className="h-6 w-px bg-[var(--ui-border)]" />
+                          <div className="font-sans text-[11px] font-bold flex items-center gap-1.5">
+                            {arrivedCount > 0 && (
+                              <span className="text-[var(--ui-brand-strong)]">✓ {arrivedCount}</span>
+                            )}
+                            {missingCount > 0 && (
+                              <span className="text-[var(--ui-danger-text)]">✕ {missingCount}</span>
+                            )}
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     {isPending ? (
-                      <button
-                        onClick={() => handleSendToReception(order)}
-                        className="primary-action bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer group"
-                      >
-                        <Truck className="w-4 h-4 text-white/90" />
-                        <span>Recibir en Mercancía</span>
-                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {arrivedCount > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSendToReception(order)}
+                              disabled={submittingOrderId === order.id}
+                              className="secondary-action px-3 py-2 border border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-secondary)] text-xs font-semibold rounded-xl cursor-pointer"
+                              title="Editar factura o cantidades antes de confirmar"
+                            >
+                              En Recepción
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDirectSendToInventory(order)}
+                              disabled={submittingOrderId === order.id}
+                              className="primary-action bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-50 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                            >
+                              <CheckCircle2 className="w-4 h-4 text-white/95" />
+                              <span>{submittingOrderId === order.id ? 'Enviando...' : 'Enviar a Inventario'}</span>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSendToReception(order)}
+                            className="primary-action bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer group"
+                          >
+                            <Truck className="w-4 h-4 text-white/90" />
+                            <span>Recibir en Mercancía</span>
+                            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <div className="text-right">
                         <div className="text-[10px] text-[var(--ui-brand-strong)] font-bold">

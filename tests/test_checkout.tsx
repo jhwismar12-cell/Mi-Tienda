@@ -21,6 +21,7 @@ import { InventoryScreen } from '../src/components/inventory/InventoryScreen';
 import { Sidebar, MobileBottomNav } from '../src/components/Sidebar';
 import { TopHeader } from '../src/components/TopHeader';
 import { ProvidersScreen } from '../src/components/providers/ProvidersScreen';
+import { OrderPlannerScreen } from '../src/components/orders/OrderPlannerScreen';
 import { LoginScreen } from '../src/components/auth/LoginScreen';
 import { canAutoFocusInput } from '../src/utils/responsive';
 import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../src/utils/currency';
@@ -1973,25 +1974,27 @@ test('ReceptionScreen shows checklist without forced scanning for scheduled orde
     false
   );
   assert.ok(!textOf(renderer.root).includes('Escanear Factura con IA'));
-  assert.ok(textOf(renderer.root).includes('0 de 3 confirmados'));
+  assert.ok(textOf(renderer.root).includes('✓ 0 verde'));
 
   const confirmBtnBefore = renderer.root.findAllByType('button').find((b) =>
     textOf(b).includes('Confirmar e Ingresar a Stock [F10]')
   )!;
   assert.equal(confirmBtnBefore.props.disabled, true);
 
-  // Toggle "Marcar todos" -> all 3 become checked, then uncheck product 2 (did not arrive)
+  // Toggle "Marcar todos ✓" -> all 3 become green (arrived), then 1 extra tap on item 2 marks it red (missing)
   const markAllBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Marcar todos'))!;
   await act(async () => {
     markAllBtn.props.onClick();
   });
-  assert.ok(textOf(renderer.root).includes('3 de 3 confirmados'));
+  assert.ok(textOf(renderer.root).includes('✓ 3 verde'));
 
-  const check2 = renderer.root.findByProps({ 'aria-label': 'Confirmar recepción de Toni Mix Cereal 180g' });
+  const toggle2 = renderer.root.findByProps({ 'aria-label': 'Confirmar recepción de Toni Mix Cereal 180g' });
   await act(async () => {
-    check2.props.onChange();
+    toggle2.props.onClick();
   });
-  assert.ok(textOf(renderer.root).includes('2 de 3 confirmados'));
+  assert.equal(renderer.root.findByProps({ 'aria-label': 'Confirmar recepción de Toni Mix Cereal 180g' }).props['data-arrival-state'], 'missing');
+  assert.ok(textOf(renderer.root).includes('✓ 2 verde'));
+  assert.ok(textOf(renderer.root).includes('✕ 1 rojo'));
   assert.ok(textOf(renderer.root).includes('9 un')); // 5 + 4 = 9 units (excluding Toni Mix 6 un)
   assert.ok(textOf(renderer.root).includes('$9.00')); // $5.00 + $4.00 = $9.00
 
@@ -2010,4 +2013,101 @@ test('ReceptionScreen shows checklist without forced scanning for scheduled orde
     ['TON-01', 'TON-03']
   );
   assert.deepEqual(markedOrderArgs?.[0], 77);
+});
+
+test('OrderPlannerScreen supports 1-tap green / 2-tap red on scheduled package items and sends only green items to inventory', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  t.mock.method(api, 'getPedidos', async () => [
+    {
+      id_pedido: 88,
+      numero_pedido: 'PED-20261117-008',
+      id_proveedor: 25,
+      proveedor_nombre: 'Nutri',
+      fecha_pedido: '2026-11-17',
+      estado: 'PENDIENTE',
+      total_unidades: 23,
+      total_estimado: 25.78,
+      items: [
+        { id_detalle_pedido: 1, id_producto: 201, producto_codigo: 'AUT-523184', producto_nombre: 'LECHE DESLACTOSADA LITRO', cantidad_pedida: 6, costo_estimado: 1.02, subtotal_estimado: 6.12 },
+        { id_detalle_pedido: 2, id_producto: 202, producto_codigo: 'AUT-842422', producto_nombre: 'LECHE SEMIDESCREMADA LITRO', cantidad_pedida: 12, costo_estimado: 0.93, subtotal_estimado: 11.16 },
+        { id_detalle_pedido: 3, id_producto: 203, producto_codigo: 'AUT-282786', producto_nombre: 'QUESO 250 GR', cantidad_pedida: 5, costo_estimado: 1.7, subtotal_estimado: 8.5 }
+      ]
+    } as any
+  ]);
+
+  let purchasePayload: any = null;
+  let receivedOrderArgs: any[] | null = null;
+  t.mock.method(api, 'registrarCompra', async (payload: any) => {
+    purchasePayload = payload;
+    return {};
+  });
+  t.mock.method(api, 'marcarPedidoRecibido', async (id: number, doc: string) => {
+    receivedOrderArgs = [id, doc];
+    return { id_pedido: id, estado: 'RECIBIDO', numero_factura: doc } as any;
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <OrderPlannerScreen />
+      </StoreProvider>
+    );
+  });
+
+  // 1 tap on LECHE DESLACTOSADA -> green (arrived)
+  const item1Btn = renderer.root.findByProps({ 'aria-label': 'Marcar llegada de LECHE DESLACTOSADA LITRO en PED-20261117-008' });
+  await act(async () => {
+    item1Btn.props.onClick();
+  });
+  assert.equal(
+    renderer.root.findByProps({ 'aria-label': 'Marcar llegada de LECHE DESLACTOSADA LITRO en PED-20261117-008' }).props['data-arrival-state'],
+    'arrived'
+  );
+
+  // 2 taps on LECHE SEMIDESCREMADA -> 1st green, 2nd red (missing)
+  const item2Btn = () => renderer.root.findByProps({ 'aria-label': 'Marcar llegada de LECHE SEMIDESCREMADA LITRO en PED-20261117-008' });
+  await act(async () => {
+    item2Btn().props.onClick();
+  });
+  assert.equal(item2Btn().props['data-arrival-state'], 'arrived');
+  await act(async () => {
+    item2Btn().props.onClick();
+  });
+  assert.equal(item2Btn().props['data-arrival-state'], 'missing');
+
+  // 1 tap on QUESO 250 GR -> green (arrived)
+  const item3Btn = renderer.root.findByProps({ 'aria-label': 'Marcar llegada de QUESO 250 GR en PED-20261117-008' });
+  await act(async () => {
+    item3Btn.props.onClick();
+  });
+  assert.equal(
+    renderer.root.findByProps({ 'aria-label': 'Marcar llegada de QUESO 250 GR en PED-20261117-008' }).props['data-arrival-state'],
+    'arrived'
+  );
+
+  // Click direct "Enviar a Inventario" button
+  const sendBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Enviar a Inventario'))!;
+  assert.ok(sendBtn, 'Expected direct Enviar a Inventario button');
+  await act(async () => {
+    await sendBtn.props.onClick();
+  });
+
+  assert.equal(purchasePayload.id_proveedor, 25);
+  assert.deepEqual(
+    purchasePayload.items.map((it: any) => it.codigo),
+    ['AUT-523184', 'AUT-282786']
+  );
+  assert.equal(receivedOrderArgs?.[0], 88);
 });
