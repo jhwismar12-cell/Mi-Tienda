@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { ReceptionDraftItem, PurchaseOrder } from '../../types';
-import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
+import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { api, AIProcessedInvoice } from '../../services/api';
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 import {
@@ -543,7 +543,7 @@ export const ReceptionScreen: React.FC = () => {
   };
 
   return (
-    <div className="workspace-screen flex-1 flex flex-col h-full overflow-y-auto lg:overflow-hidden bg-[var(--ui-surface-muted)] p-4 md:p-6 gap-3.5 select-none">
+    <div className="workspace-screen flex-1 flex flex-col h-full overflow-y-auto lg:overflow-hidden bg-[var(--ui-surface-muted)] p-3 md:p-6 gap-2.5 md:gap-3.5 select-none">
       {/* Pending Orders Packaging Section (if any pending) */}
       {pendingOrders.length > 0 && !selectedOrderForReception && (
         <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl p-3.5 shrink-0 shadow-xs space-y-2">
@@ -632,9 +632,9 @@ export const ReceptionScreen: React.FC = () => {
       )}
 
       {/* Context Header & Metadata */}
-      <div className="surface-card flex flex-col lg:flex-row items-start lg:items-center justify-between shrink-0 bg-[var(--ui-surface)] p-4 border border-[var(--ui-border)] rounded-xl gap-4 shadow-xs">
+      <div className="surface-card flex flex-col lg:flex-row items-start lg:items-center justify-between shrink-0 bg-[var(--ui-surface)] p-3 md:p-4 border border-[var(--ui-border)] rounded-xl gap-3 md:gap-4 shadow-xs">
         <div>
-          <p className="workspace-eyebrow ml-8 mb-1">Compras e inventario</p>
+          <p className="workspace-eyebrow ml-8 mb-0.5 md:mb-1">Compras e inventario</p>
           <div className="flex items-center gap-2 mb-0.5">
             <button
               onClick={() => setActiveScreen('inventory')}
@@ -643,19 +643,19 @@ export const ReceptionScreen: React.FC = () => {
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="workspace-heading font-bold text-lg md:text-xl text-[var(--ui-text)]">
+            <h1 className="workspace-heading font-bold text-base md:text-xl text-[var(--ui-text)]">
               Recepción de Mercancía
             </h1>
           </div>
-          <p className="text-sm text-[var(--ui-muted)] ml-8">
+          <p className="text-xs md:text-sm text-[var(--ui-muted)] ml-8">
             Registro de ingreso físico de compras e inventario al Kardex.
           </p>
         </div>
 
         {/* Metadata Inputs (Provider, Invoice, Date) */}
-        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2.5 sm:gap-3 w-full lg:w-auto">
           {/* Provider */}
-          <div className="flex flex-col gap-0.5">
+          <div className="col-span-2 sm:col-span-1 flex flex-col gap-0.5">
             <div className="flex items-center justify-between">
               <label className="text-xs text-[var(--ui-muted)] font-semibold">
                 Proveedor / Distribuidor
@@ -677,7 +677,7 @@ export const ReceptionScreen: React.FC = () => {
                 setProviderId(selected?.id_proveedor);
                 setProvider(selected?.razon_social || '');
               }}
-              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none font-medium min-w-[200px]"
+              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none font-medium w-full sm:min-w-[200px]"
             >
               <option value="">Selecciona un proveedor</option>
               {providerList.map((p) => (
@@ -698,7 +698,7 @@ export const ReceptionScreen: React.FC = () => {
               value={invoiceNumber}
               onChange={(e) => setInvoiceNumber(e.target.value)}
               placeholder="Ej: 001-002-12345"
-              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 font-mono text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none uppercase w-36 font-bold"
+              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 font-mono text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none uppercase w-full sm:w-36 font-bold"
             />
           </div>
 
@@ -711,7 +711,7 @@ export const ReceptionScreen: React.FC = () => {
               type="date"
               value={invoiceDate}
               onChange={(e) => setInvoiceDate(e.target.value)}
-              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 font-mono text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none w-36"
+              className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-2.5 py-1.5 font-mono text-xs text-[var(--ui-text)] focus:border-[var(--ui-brand)] outline-none w-full sm:w-36"
             />
           </div>
         </div>
@@ -771,7 +771,7 @@ export const ReceptionScreen: React.FC = () => {
       )}
 
       {/* Main Items Data Table / Order Arrival Checklist */}
-      <div className="table-shell flex-1 min-h-[280px] lg:min-h-0 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl overflow-hidden shadow-xs flex flex-col">
+      <div className="table-shell shrink-0 lg:shrink lg:flex-1 lg:min-h-0 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl lg:overflow-hidden shadow-xs flex flex-col">
         {selectedOrderForReception && items.length > 0 && (
           <div className="px-4 py-2.5 bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] flex flex-wrap items-center justify-between gap-2 shrink-0">
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -802,34 +802,34 @@ export const ReceptionScreen: React.FC = () => {
           </div>
         )}
 
-        <div className="flex-1 overflow-auto">
+        <div className="overflow-x-auto lg:flex-1 lg:overflow-auto">
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 bg-[var(--ui-surface-hover)] z-10">
               <tr>
                 {selectedOrderForReception && (
-                  <th className="table-heading px-3 py-2.5 font-sans text-xs font-semibold text-[var(--ui-brand-strong)] text-center w-[72px] whitespace-nowrap">
+                  <th className="table-heading px-2 sm:px-3 py-2.5 font-sans text-xs font-semibold text-[var(--ui-brand-strong)] text-center w-[68px] whitespace-nowrap">
                     Llegó
                   </th>
                 )}
-                <th className="table-heading hidden sm:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] w-[120px]">
+                <th className="table-heading hidden md:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] w-[120px]">
                   Código
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] ">
+                <th className="table-heading px-2 sm:px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)]">
                   Producto / Descripción
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-center w-[120px]">
-                  Cant. Recibida
+                <th className="table-heading px-2 sm:px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-center w-[78px] sm:w-[120px]">
+                  Cant.
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[110px]">
+                <th className="table-heading hidden md:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[110px]">
                   Costo Unit. ($)
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[120px]">
+                <th className="table-heading hidden md:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[120px]">
                   PVP Sugerido ($)
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[110px]">
+                <th className="table-heading hidden md:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-right w-[110px]">
                   Subtotal ($)
                 </th>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-center w-[50px]">
+                <th className="table-heading px-1.5 sm:px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] text-center w-[40px] sm:w-[50px]">
                   
                 </th>
               </tr>
@@ -892,13 +892,13 @@ export const ReceptionScreen: React.FC = () => {
                         </td>
                       )}
 
-                      <td className="hidden sm:table-cell px-4 py-2.5 font-mono font-bold text-[var(--ui-secondary)]">
+                      <td className="hidden md:table-cell px-4 py-2.5 font-mono font-bold text-[var(--ui-secondary)]">
                         {item.code}
                       </td>
 
-                      <td className="px-3 sm:px-4 py-2.5 font-medium text-[var(--ui-text)]">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`font-semibold ${isMissing ? 'line-through text-[var(--ui-danger-text)]' : ''}`}>
+                      <td className="px-2 sm:px-4 py-2.5 font-medium text-[var(--ui-text)]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`font-semibold leading-tight ${isMissing ? 'line-through text-[var(--ui-danger-text)]' : ''}`}>
                             {item.name}
                           </span>
                           {item.isNewProduct && (
@@ -907,12 +907,12 @@ export const ReceptionScreen: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="sm:hidden text-[10px] font-mono text-[var(--ui-muted)] mt-0.5">
-                          {item.code}
+                        <div className="md:hidden text-[10px] font-mono text-[var(--ui-muted)] mt-0.5">
+                          {item.code} • ${formatCostPrice(item.unitCost)} • Subt: ${subtotal.toFixed(2)}
                         </div>
                       </td>
 
-                      <td className="px-4 py-2.5 text-center">
+                      <td className="px-2 sm:px-4 py-2.5 text-center">
                         <input
                           type="number"
                           step="0.01"
@@ -924,11 +924,11 @@ export const ReceptionScreen: React.FC = () => {
                               handleUpdateItem(item.id, { quantityReceived: Number(val.toFixed(3)) });
                             }
                           }}
-                          className="w-20 px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded font-mono font-black text-center text-sm outline-none text-[var(--ui-text)]"
+                          className="w-16 sm:w-20 px-1.5 sm:px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded font-mono font-black text-center text-sm outline-none text-[var(--ui-text)]"
                         />
                       </td>
 
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="hidden md:table-cell px-4 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <input
                             type="number"
@@ -950,7 +950,7 @@ export const ReceptionScreen: React.FC = () => {
                         </div>
                       </td>
 
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="hidden md:table-cell px-4 py-2.5 text-right">
                         <input
                           type="number"
                           step="0.01"
@@ -965,11 +965,11 @@ export const ReceptionScreen: React.FC = () => {
                         />
                       </td>
 
-                      <td className="px-4 py-2.5 font-mono font-bold text-right text-[var(--ui-text)]">
+                      <td className="hidden md:table-cell px-4 py-2.5 font-mono font-bold text-right text-[var(--ui-text)]">
                         ${subtotal.toFixed(2)}
                       </td>
 
-                      <td className="px-4 py-2.5 text-center">
+                      <td className="px-1.5 sm:px-4 py-2.5 text-center">
                         <button
                           onClick={() => handleDeleteItem(item.id)}
                           className="p-1 text-[var(--ui-subtle)] hover:text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] rounded transition-colors cursor-pointer"
@@ -987,7 +987,7 @@ export const ReceptionScreen: React.FC = () => {
         </div>
 
         {/* Footer Summary & Save Button */}
-        <div className="px-6 py-3.5 bg-[var(--ui-surface-muted)] border-t border-[var(--ui-border)] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
+        <div className="px-4 sm:px-6 py-3 sm:py-3.5 bg-[var(--ui-surface-muted)] border-t border-[var(--ui-border)] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs tabular-nums">
             <div>
               <span className="text-[var(--ui-muted)] font-sans mr-2">Total Ítems:</span>
