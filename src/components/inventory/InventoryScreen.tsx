@@ -52,6 +52,7 @@ type SortOption =
   | 'name_asc' 
   | 'name_desc' 
   | 'supplier_asc' 
+  | 'supplier_desc'
   | 'stock_asc' 
   | 'stock_desc' 
   | 'price_asc' 
@@ -311,11 +312,15 @@ export const InventoryScreen: React.FC = () => {
           return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
         case 'name_desc':
           return b.name.localeCompare(a.name, 'es', { sensitivity: 'base' });
-        case 'supplier_asc': {
-          const supA = a.distributor || 'Z_SinProveedor';
-          const supB = b.distributor || 'Z_SinProveedor';
-          const cmp = supA.localeCompare(supB, 'es', { sensitivity: 'base' });
-          return cmp !== 0 ? cmp : a.name.localeCompare(b.name);
+        case 'supplier_asc':
+        case 'supplier_desc': {
+          const supA = a.distributor || 'General';
+          const supB = b.distributor || 'General';
+          const cmp =
+            sortBy === 'supplier_asc'
+              ? supA.localeCompare(supB, 'es', { sensitivity: 'base' })
+              : supB.localeCompare(supA, 'es', { sensitivity: 'base' });
+          return cmp !== 0 ? cmp : a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
         }
         case 'stock_asc':
           return a.stock - b.stock;
@@ -559,7 +564,10 @@ export const InventoryScreen: React.FC = () => {
                 type="button"
                 onClick={() => setIsSupplierMenuOpen(!isSupplierMenuOpen)}
                 className={`p-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center border ${
-                  isSupplierMenuOpen || selectedSupplier !== 'all' || sortBy === 'supplier_asc'
+                  isSupplierMenuOpen ||
+                  selectedSupplier !== 'all' ||
+                  sortBy === 'supplier_asc' ||
+                  sortBy === 'supplier_desc'
                     ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)] shadow-xs'
                     : 'bg-[var(--ui-surface)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] hover:text-[var(--ui-text)]'
                 }`}
@@ -603,7 +611,7 @@ export const InventoryScreen: React.FC = () => {
                         showToast('Productos organizados por Proveedor (A → Z)');
                       }}
                       className={`w-full px-2.5 py-2 rounded-xl text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
-                        sortBy === 'supplier_asc'
+                        sortBy === 'supplier_asc' || sortBy === 'supplier_desc'
                           ? 'bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)] font-bold border border-[var(--ui-brand)]/30'
                           : 'text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-muted)] border border-transparent'
                       }`}
@@ -615,7 +623,9 @@ export const InventoryScreen: React.FC = () => {
                           <div className="text-[10px] text-[var(--ui-muted)] font-normal">Agrupa y ordena todos los productos según su distribuidor</div>
                         </div>
                       </div>
-                      {sortBy === 'supplier_asc' && <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />}
+                      {(sortBy === 'supplier_asc' || sortBy === 'supplier_desc') && (
+                        <Check className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />
+                      )}
                     </button>
 
                     <button
@@ -870,14 +880,24 @@ export const InventoryScreen: React.FC = () => {
                   </div>
                 </th>
 
-                {/* 4. Distribuidor / Proveedor */}
-                <th 
-                  onClick={() => setSortBy('supplier_asc')}
-                  className="table-heading px-4 py-3 font-sans text-xs font-semibold text-[var(--ui-muted)] cursor-pointer hover:bg-[var(--ui-surface-hover)] transition-colors hidden md:table-cell min-w-[180px]"
+                {/* 4. Distribuidores */}
+                <th
+                  onClick={() =>
+                    setSortBy(prev => (prev === 'supplier_asc' ? 'supplier_desc' : 'supplier_asc'))
+                  }
+                  aria-label="Ordenar por Distribuidores"
+                  title="Clic para ordenar por distribuidor (A → Z / Z → A)"
+                  className="table-heading px-4 py-3 font-sans text-xs font-semibold text-[var(--ui-muted)] cursor-pointer hover:bg-[var(--ui-surface-hover)] transition-colors min-w-[170px] whitespace-nowrap"
                 >
                   <div className="flex items-center gap-1">
-                    <span>Distribuidor / Proveedor</span>
-                    {sortBy === 'supplier_asc' && <ChevronDown className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />}
+                    <span>Distribuidores</span>
+                    {sortBy === 'supplier_asc' ? (
+                      <ChevronUp className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                    ) : sortBy === 'supplier_desc' ? (
+                      <ChevronDown className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-[var(--ui-subtle)]" />
+                    )}
                   </div>
                 </th>
 
@@ -1038,8 +1058,8 @@ export const InventoryScreen: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* 4. Distribuidor / Proveedor */}
-                      <td className="px-4 py-3 hidden md:table-cell min-w-[180px]">
+                      {/* 4. Distribuidores */}
+                      <td className="px-4 py-3 min-w-[170px]">
                         {product.distributor ? (
                           <span title={product.distributor} className={`inline-block max-w-[160px] truncate align-middle px-2 py-0.5 rounded text-[10px] font-semibold border ${getSupplierBadgeStyle(product.distributor)}`}>
                             {product.distributor}

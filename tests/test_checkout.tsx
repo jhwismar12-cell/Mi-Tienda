@@ -1834,3 +1834,74 @@ test('InventoryScreen lets user delete products from table row and Kardex drawer
   assert.equal(invDelStore.products.length, 0);
   assert.equal(invDelStore.selectedKardexProductId, null);
 });
+
+test('InventoryScreen shows visible Distribuidores column and toggles A-Z / Z-A sorting on header click', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  t.mock.method(api, 'getProductos', async () => [
+    {
+      ...createdProduct('Abarrotes', 1),
+      id_producto: 41,
+      codigo_interno: 'S-01',
+      nombre: 'Alfa Producto',
+      proveedor_nombre: 'Zeta Distribuciones'
+    },
+    {
+      ...createdProduct('Bebidas', 2),
+      id_producto: 42,
+      codigo_interno: 'S-02',
+      nombre: 'Zeta Producto',
+      proveedor_nombre: 'Alfa Distribuciones'
+    },
+    {
+      ...createdProduct('Snacks', 3),
+      id_producto: 43,
+      codigo_interno: 'S-03',
+      nombre: 'Beta Producto',
+      proveedor_nombre: 'Bodega Central'
+    }
+  ]);
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <InventoryScreen />
+      </StoreProvider>
+    );
+  });
+
+  const distHeader = renderer.root.findByProps({ 'aria-label': 'Ordenar por Distribuidores' });
+  assert.ok(textOf(distHeader).includes('Distribuidores'));
+  assert.ok(!String(distHeader.props.className || '').includes('hidden md:table-cell'));
+
+  const renderedProductNames = () => {
+    const tbody = renderer.root.findByType('tbody');
+    return tbody.findAllByType('tr').map((tr) => textOf(tr.findAllByType('td')[2]).trim());
+  };
+
+  // Default: name_asc -> Alfa Producto, Beta Producto, Zeta Producto
+  assert.deepEqual(renderedProductNames(), ['Alfa Producto', 'Beta Producto', 'Zeta Producto']);
+
+  // First click on Distribuidores header -> supplier_asc (Alfa -> Bodega -> Zeta)
+  await act(async () => {
+    distHeader.props.onClick();
+  });
+  assert.deepEqual(renderedProductNames(), ['Zeta Producto', 'Beta Producto', 'Alfa Producto']);
+
+  // Second click on Distribuidores header -> supplier_desc (Zeta -> Bodega -> Alfa)
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Ordenar por Distribuidores' }).props.onClick();
+  });
+  assert.deepEqual(renderedProductNames(), ['Alfa Producto', 'Beta Producto', 'Zeta Producto']);
+});
