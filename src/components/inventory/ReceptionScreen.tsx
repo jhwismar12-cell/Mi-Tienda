@@ -87,6 +87,9 @@ export const ReceptionScreen: React.FC = () => {
 
   // Reception Draft Items
   const [items, setItems] = useState<ReceptionDraftItem[]>([]);
+  // Per-item arrival checkboxes when confirming a scheduled purchase order pack
+  const [confirmedItemIds, setConfirmedItemIds] = useState<Record<string, boolean>>({});
+  const [showOrderScannerTools, setShowOrderScannerTools] = useState(false);
 
   // Pending purchase orders
   const pendingOrders = useMemo(() => {
@@ -102,6 +105,14 @@ export const ReceptionScreen: React.FC = () => {
           const initial = res.find(p => p.razon_social === provider) || res[0];
           setProvider(initial.razon_social);
           setProviderId(initial.id_proveedor);
+        } else if (!providerId) {
+          const matched = res.find(
+            p => p.razon_social.trim().toLowerCase() === selectedOrderForReception.providerName.trim().toLowerCase()
+          );
+          if (matched) {
+            setProviderId(matched.id_proveedor);
+            setProvider(matched.razon_social);
+          }
         }
       }
     }).catch(() => {});
@@ -138,12 +149,35 @@ export const ReceptionScreen: React.FC = () => {
     });
 
     setItems(draftItems);
-    showToast(`📦 Pedido #${order.orderNumber} cargado. Revisa y ajusta las cantidades recibidas.`);
+    setConfirmedItemIds({});
+    setShowOrderScannerTools(false);
+    showToast(`📦 Pedido #${order.orderNumber} cargado. Marca con ✓ cada producto que llegó antes de confirmar.`);
   };
 
   const clearLoadedOrder = () => {
     setSelectedOrderForReception(null);
     setItems([]);
+    setConfirmedItemIds({});
+    setShowOrderScannerTools(false);
+  };
+
+  const toggleItemConfirmed = (id: string) => {
+    setConfirmedItemIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const areAllItemsConfirmed =
+    items.length > 0 && items.every(it => Boolean(confirmedItemIds[it.id]));
+
+  const toggleAllItemsConfirmed = () => {
+    if (areAllItemsConfirmed) {
+      setConfirmedItemIds({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const it of items) {
+      next[it.id] = true;
+    }
+    setConfirmedItemIds(next);
   };
 
   // Camera Management
@@ -321,13 +355,25 @@ export const ReceptionScreen: React.FC = () => {
     setNewProvAddress('');
   };
 
-  // Calculations
-  const totalUnits = items.reduce((sum, it) => sum + (it.quantityReceived || 0), 0);
-  const totalAmount = Number(items.reduce((sum, it) => sum + (it.quantityReceived * it.unitCost), 0).toFixed(2));
+  // Calculations (when confirming a scheduled order pack, count only checked items)
+  const confirmedItems = useMemo(
+    () => (selectedOrderForReception ? items.filter(it => Boolean(confirmedItemIds[it.id])) : items),
+    [selectedOrderForReception, items, confirmedItemIds]
+  );
+  const totalUnits = confirmedItems.reduce((sum, it) => sum + (it.quantityReceived || 0), 0);
+  const totalAmount = Number(
+    confirmedItems.reduce((sum, it) => sum + it.quantityReceived * it.unitCost, 0).toFixed(2)
+  );
 
   useEffect(() => {
-    barcodeRef.current?.focus();
-  }, []);
+    const hasTouch =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches;
+    if (!selectedOrderForReception && !hasTouch) {
+      barcodeRef.current?.focus();
+    }
+  }, [selectedOrderForReception]);
 
   // Keyboard shortcut for F10 (Guardar Compra)
   useEffect(() => {
@@ -339,7 +385,7 @@ export const ReceptionScreen: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [items, provider, providerId, invoiceNumber, invoiceDate, totalUnits, totalAmount, selectedOrderForReception]);
+  }, [items, confirmedItems, provider, providerId, invoiceNumber, invoiceDate, totalUnits, totalAmount, selectedOrderForReception]);
 
   const processScannedOrEnteredCode = (rawCode: string): string => {
     const query = rawCode.trim();
@@ -359,6 +405,9 @@ export const ReceptionScreen: React.FC = () => {
             : it
         )
       );
+      if (selectedOrderForReception) {
+        setConfirmedItemIds(prev => ({ ...prev, [existingInDraft.id]: true }));
+      }
       showToast(`Cantidad incrementada para ${existingInDraft.name}`);
       return `${existingInDraft.name} (×${existingInDraft.quantityReceived + 1})`;
     }
@@ -375,6 +424,9 @@ export const ReceptionScreen: React.FC = () => {
         suggestedSalePrice: product.salePrice
       };
       setItems(prev => [...prev, newItem]);
+      if (selectedOrderForReception) {
+        setConfirmedItemIds(prev => ({ ...prev, [newItem.id]: true }));
+      }
       showToast(`Producto ${product.name} agregado a la recepción`);
       return `${product.name} (+1)`;
     }
@@ -391,6 +443,9 @@ export const ReceptionScreen: React.FC = () => {
       isNewProduct: true
     };
     setItems(prev => [...prev, newItem]);
+    if (selectedOrderForReception) {
+      setConfirmedItemIds(prev => ({ ...prev, [newItem.id]: true }));
+    }
     showToast(`Nuevo ítem ${query} agregado`);
     return `Nuevo ítem (${query})`;
   };
@@ -419,12 +474,24 @@ export const ReceptionScreen: React.FC = () => {
 
   const handleDeleteItem = (id: string) => {
     setItems(prev => prev.filter(it => it.id !== id));
+    setConfirmedItemIds(prev => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleSavePurchase = async () => {
     if (savingPurchase.current) return;
     if (items.length === 0) {
       showToast('⚠️ Debe agregar al menos un producto a la recepción.');
+      return;
+    }
+
+    const itemsToReceive = selectedOrderForReception ? confirmedItems : items;
+    if (itemsToReceive.length === 0) {
+      showToast('⚠️ Marca con ✓ al menos un producto que haya llegado antes de confirmar.');
       return;
     }
 
@@ -438,11 +505,11 @@ export const ReceptionScreen: React.FC = () => {
 
     try {
       if (selectedOrderForReception) {
-        // Reconcile and receive order in stock
+        // Reconcile and receive checked order items into stock
         await receiveOrderInStock(
           selectedOrderForReception.id,
           docNum,
-          items,
+          itemsToReceive,
           provider,
           providerId
         );
@@ -453,7 +520,7 @@ export const ReceptionScreen: React.FC = () => {
           providerId,
           invoiceNumber: docNum,
           date: invoiceDate,
-          items,
+          items: itemsToReceive,
           totalUnits,
           totalAmount
         });
@@ -480,7 +547,7 @@ export const ReceptionScreen: React.FC = () => {
   };
 
   return (
-    <div className="workspace-screen flex-1 flex flex-col h-full overflow-hidden bg-[var(--ui-surface-muted)] p-4 md:p-6 gap-3.5 select-none">
+    <div className="workspace-screen flex-1 flex flex-col h-full overflow-y-auto lg:overflow-hidden bg-[var(--ui-surface-muted)] p-4 md:p-6 gap-3.5 select-none">
       {/* Pending Orders Packaging Section (if any pending) */}
       {pendingOrders.length > 0 && !selectedOrderForReception && (
         <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-2xl p-3.5 shrink-0 shadow-xs space-y-2">
@@ -542,18 +609,29 @@ export const ReceptionScreen: React.FC = () => {
               <span>Distribuidor: <strong>{selectedOrderForReception.providerName}</strong></span>
               <span className="mx-1.5">•</span>
               <span className="text-[11px] text-[var(--ui-brand-strong)]">
-                Revisa y ajusta las cantidades que realmente trajo el camión antes de confirmar.
+                Marca con ✓ los productos que sí llegaron (sin necesidad de escanear) para pasarlos al inventario.
               </span>
             </div>
           </div>
-          <button
-            onClick={clearLoadedOrder}
-            className="text-xs font-bold text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-            title="Descartar y volver a recepción libre"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span>Descartar Paquete</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowOrderScannerTools(prev => !prev)}
+              className="text-xs font-semibold text-[var(--ui-brand-strong)] hover:bg-[var(--ui-surface)]/70 border border-[var(--ui-brand-soft-border)] px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <Barcode className="w-3.5 h-3.5" />
+              <span>{showOrderScannerTools ? 'Ocultar escáner' : 'Escanear / añadir extra'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={clearLoadedOrder}
+              className="text-xs font-bold text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+              title="Descartar y volver a recepción libre"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Descartar Paquete</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -643,9 +721,10 @@ export const ReceptionScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* Barcode Search Scanning Area & AI Trigger */}
-      <div className="shrink-0 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-        <form onSubmit={handleBarcodeSubmit} className="relative flex-1 group">
+      {/* Barcode Search Scanning Area & AI Trigger (hidden when verifying an already-scheduled order pack unless toggled) */}
+      {(!selectedOrderForReception || showOrderScannerTools) && (
+        <div className="shrink-0 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+          <form onSubmit={handleBarcodeSubmit} className="relative flex-1 group">
           <div className="relative bg-[var(--ui-surface)] border border-[var(--ui-border)] focus-within:border-[var(--ui-brand)] focus-within:ring-2 focus-within:ring-[var(--ui-brand)]/20 rounded-xl flex items-center px-4 py-2.5 transition-all shadow-xs">
             <Barcode className="w-5 h-5 text-[var(--ui-muted)] mr-3 shrink-0" />
             <input
@@ -692,15 +771,43 @@ export const ReceptionScreen: React.FC = () => {
           <span>Escanear Factura con IA</span>
           <Camera className="w-4 h-4 text-white/90" />
         </button>
-      </div>
+        </div>
+      )}
 
-      {/* Main Items Data Table */}
-      <div className="table-shell flex-1 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl overflow-hidden shadow-xs flex flex-col">
+      {/* Main Items Data Table / Order Arrival Checklist */}
+      <div className="table-shell flex-1 min-h-[280px] lg:min-h-0 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl overflow-hidden shadow-xs flex flex-col">
+        {selectedOrderForReception && items.length > 0 && (
+          <div className="px-4 py-2.5 bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2 text-xs">
+              <CheckCircle2 className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />
+              <span className="font-bold text-[var(--ui-text)]">
+                Lista de Verificación del Pedido
+              </span>
+              <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--ui-brand)]/10 text-[var(--ui-brand-strong)]">
+                {confirmedItems.length} de {items.length} confirmados
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleAllItemsConfirmed}
+              className="px-3 py-1 rounded-lg text-xs font-bold border border-[var(--ui-brand-soft-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] transition-colors cursor-pointer"
+            >
+              {areAllItemsConfirmed ? 'Desmarcar todos' : `Marcar todos (${items.length})`}
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-auto">
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 bg-[var(--ui-surface-hover)] z-10">
               <tr>
-                <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] w-[120px]">
+                {selectedOrderForReception && (
+                  <th className="table-heading px-3 py-2.5 font-sans text-xs font-semibold text-[var(--ui-brand-strong)] text-center w-[72px] whitespace-nowrap">
+                    Llegó
+                  </th>
+                )}
+                <th className="table-heading hidden sm:table-cell px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] w-[120px]">
                   Código
                 </th>
                 <th className="table-heading px-4 py-2.5 font-sans text-xs md:text-xs font-semibold text-[var(--ui-muted)] ">
@@ -726,7 +833,7 @@ export const ReceptionScreen: React.FC = () => {
             <tbody className="divide-y divide-[var(--ui-border)]">
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-[var(--ui-subtle)]">
+                  <td colSpan={selectedOrderForReception ? 8 : 7} className="py-16 text-center text-[var(--ui-subtle)]">
                     <div className="max-w-sm mx-auto space-y-2">
                       <FileText className="w-10 h-10 mx-auto text-[var(--ui-subtle)]" />
                       <p className="font-semibold text-sm text-[var(--ui-secondary)]">
@@ -740,23 +847,50 @@ export const ReceptionScreen: React.FC = () => {
                 </tr>
               ) : (
                 items.map((item) => {
+                  const isConfirmed = !selectedOrderForReception || Boolean(confirmedItemIds[item.id]);
                   const subtotal = Number(((item.quantityReceived || 0) * (item.unitCost || 0)).toFixed(2));
                   const isCostHigher = item.unitCost > item.previousCost;
 
                   return (
-                    <tr key={item.id} className="hover:bg-[var(--ui-surface-muted)] text-xs transition-colors">
-                      <td className="px-4 py-2.5 font-mono font-bold text-[var(--ui-secondary)]">
+                    <tr
+                      key={item.id}
+                      className={`text-xs transition-colors ${
+                        selectedOrderForReception && isConfirmed
+                          ? 'bg-[var(--ui-brand)]/5 hover:bg-[var(--ui-brand)]/10'
+                          : selectedOrderForReception
+                          ? 'opacity-65 hover:bg-[var(--ui-surface-muted)]'
+                          : 'hover:bg-[var(--ui-surface-muted)]'
+                      }`}
+                    >
+                      {selectedOrderForReception && (
+                        <td className="px-3 py-2.5 text-center">
+                          <label className="inline-flex items-center justify-center p-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isConfirmed}
+                              onChange={() => toggleItemConfirmed(item.id)}
+                              aria-label={`Confirmar recepción de ${item.name}`}
+                              className="w-4 h-4 rounded border-[var(--ui-border)] accent-[var(--ui-brand)] cursor-pointer"
+                            />
+                          </label>
+                        </td>
+                      )}
+
+                      <td className="hidden sm:table-cell px-4 py-2.5 font-mono font-bold text-[var(--ui-secondary)]">
                         {item.code}
                       </td>
 
-                      <td className="px-4 py-2.5 font-medium text-[var(--ui-text)]">
-                        <div className="flex items-center gap-2">
+                      <td className="px-3 sm:px-4 py-2.5 font-medium text-[var(--ui-text)]">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-semibold">{item.name}</span>
                           {item.isNewProduct && (
                             <span className="bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)] px-1.5 py-0.2 rounded text-[10px] font-bold">
                               NUEVO
                             </span>
                           )}
+                        </div>
+                        <div className="sm:hidden text-[10px] font-mono text-[var(--ui-muted)] mt-0.5">
+                          {item.code}
                         </div>
                       </td>
 
@@ -839,7 +973,9 @@ export const ReceptionScreen: React.FC = () => {
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs tabular-nums">
             <div>
               <span className="text-[var(--ui-muted)] font-sans mr-2">Total Ítems:</span>
-              <strong className="text-[var(--ui-text)] text-sm">{items.length}</strong>
+              <strong className="text-[var(--ui-text)] text-sm">
+                {selectedOrderForReception ? `${confirmedItems.length} / ${items.length}` : items.length}
+              </strong>
             </div>
             <div>
               <span className="text-[var(--ui-muted)] font-sans mr-2">Total Unidades:</span>
@@ -865,7 +1001,7 @@ export const ReceptionScreen: React.FC = () => {
 
             <button
               onClick={handleSavePurchase}
-              disabled={items.length === 0 || isSavingPurchase || !providerId}
+              disabled={confirmedItems.length === 0 || isSavingPurchase || !providerId}
               className="primary-action bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-50 text-white font-semibold text-xs md:text-sm px-6 py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
               <Save className="w-4 h-4" />

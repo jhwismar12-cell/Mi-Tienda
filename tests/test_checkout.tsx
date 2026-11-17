@@ -1905,3 +1905,109 @@ test('InventoryScreen shows visible Distribuidores column and toggles A-Z / Z-A 
   });
   assert.deepEqual(renderedProductNames(), ['Alfa Producto', 'Beta Producto', 'Zeta Producto']);
 });
+
+test('ReceptionScreen shows checklist without forced scanning for scheduled orders and sends only checked items to stock', async (t) => {
+  (globalThis as any).document.addEventListener = () => {};
+  (globalThis as any).document.removeEventListener = () => {};
+
+  t.mock.method(api, 'getProveedores', async () => [
+    { id_proveedor: 20, ruc_ci: '1790009999001', razon_social: 'Toni' }
+  ]);
+  t.mock.method(api, 'getIAConfig', async () => ({ configurado: false, api_key_mascara: '' }));
+
+  let capturedPurchase: any = null;
+  let markedOrderArgs: any[] | null = null;
+  t.mock.method(api, 'registrarCompra', async (payload: any) => {
+    capturedPurchase = payload;
+    return {};
+  });
+  t.mock.method(api, 'marcarPedidoRecibido', async (id: number, doc: string) => {
+    markedOrderArgs = [id, doc];
+    return { id_pedido: id, estado: 'RECIBIDO', numero_factura: doc } as any;
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  let recStore!: StoreContextType;
+  function RecOrderProbe() { recStore = useStore(); return null; }
+
+  await act(async () => {
+    renderer.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <StoreProvider>
+        <RecOrderProbe />
+        <ReceptionScreen />
+      </StoreProvider>
+    );
+  });
+
+  // Load scheduled Toni order pack
+  await act(async () => {
+    recStore.setSelectedOrderForReception({
+      id: '77',
+      orderNumber: 'PED-20261117-002',
+      providerId: 20,
+      providerName: 'Toni',
+      date: '2026-11-17',
+      status: 'PENDIENTE',
+      totalUnits: 15,
+      totalAmount: 18.0,
+      items: [
+        { id: '1', productId: '101', code: 'TON-01', name: 'Yogurt Toni Fresa 200ml', quantityOrdered: 5, estimatedCost: 1.0, subtotal: 5.0 },
+        { id: '2', productId: '102', code: 'TON-02', name: 'Toni Mix Cereal 180g', quantityOrdered: 6, estimatedCost: 1.5, subtotal: 9.0 },
+        { id: '3', productId: '103', code: 'TON-03', name: 'Leche Toni Chocolate 200ml', quantityOrdered: 4, estimatedCost: 1.0, subtotal: 4.0 }
+      ]
+    });
+  });
+
+  // Scanner controls must be hidden by default while checking a scheduled order pack
+  assert.equal(
+    renderer.root.findAllByType('input').some((i) => i.props.placeholder?.startsWith('Escanear código')),
+    false
+  );
+  assert.ok(!textOf(renderer.root).includes('Escanear Factura con IA'));
+  assert.ok(textOf(renderer.root).includes('0 de 3 confirmados'));
+
+  const confirmBtnBefore = renderer.root.findAllByType('button').find((b) =>
+    textOf(b).includes('Confirmar e Ingresar a Stock [F10]')
+  )!;
+  assert.equal(confirmBtnBefore.props.disabled, true);
+
+  // Toggle "Marcar todos" -> all 3 become checked, then uncheck product 2 (did not arrive)
+  const markAllBtn = renderer.root.findAllByType('button').find((b) => textOf(b).includes('Marcar todos'))!;
+  await act(async () => {
+    markAllBtn.props.onClick();
+  });
+  assert.ok(textOf(renderer.root).includes('3 de 3 confirmados'));
+
+  const check2 = renderer.root.findByProps({ 'aria-label': 'Confirmar recepción de Toni Mix Cereal 180g' });
+  await act(async () => {
+    check2.props.onChange();
+  });
+  assert.ok(textOf(renderer.root).includes('2 de 3 confirmados'));
+  assert.ok(textOf(renderer.root).includes('9 un')); // 5 + 4 = 9 units (excluding Toni Mix 6 un)
+  assert.ok(textOf(renderer.root).includes('$9.00')); // $5.00 + $4.00 = $9.00
+
+  const confirmBtnReady = renderer.root.findAllByType('button').find((b) =>
+    textOf(b).includes('Confirmar e Ingresar a Stock [F10]')
+  )!;
+  assert.equal(confirmBtnReady.props.disabled, false);
+
+  await act(async () => {
+    await confirmBtnReady.props.onClick();
+  });
+
+  assert.equal(capturedPurchase.id_proveedor, 20);
+  assert.deepEqual(
+    capturedPurchase.items.map((it: any) => it.codigo),
+    ['TON-01', 'TON-03']
+  );
+  assert.deepEqual(markedOrderArgs?.[0], 77);
+});
