@@ -43,7 +43,8 @@ export const SettingsScreen: React.FC = () => {
     assignWorkerPassword,
     deleteWorker,
     activeWorkerName,
-    setActiveWorker
+    setActiveWorker,
+    refreshStoreConfig
   } = useStore();
 
   const [storeName, setStoreName] = useState('Mi Tienda Familiar');
@@ -141,6 +142,7 @@ export const SettingsScreen: React.FC = () => {
         PIE_TICKET: ticketFooter,
         FORMATO_IMPRESORA: printerWidth
       });
+      await refreshStoreConfig();
       showToast('Configuraciones guardadas exitosamente');
     } catch (e) {
       showToast('Configuraciones guardadas localmente');

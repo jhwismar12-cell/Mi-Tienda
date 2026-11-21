@@ -164,8 +164,13 @@ class VentaCobrarRequest(BaseModel):
     items: List[VentaItemRequest]
     metodo_pago: Literal["EFECTIVO", "TRANSFERENCIA", "MIXTO"] = "EFECTIVO"
     monto_recibido: float = Field(0.0, ge=0)
+    monto_efectivo: Optional[float] = Field(None, ge=0)
+    monto_transferencia: Optional[float] = Field(None, ge=0)
     descuento: float = Field(0.0, ge=0)
     impuestos: float = Field(0.0, ge=0)
+
+class VentaAnularRequest(BaseModel):
+    motivo: str = Field(..., min_length=3, max_length=300)
 
 class VentaDetalleOut(BaseModel):
     id_detalle_venta: int
@@ -192,7 +197,10 @@ class VentaOut(BaseModel):
     metodo_pago: str
     monto_recibido: float
     cambio: float
+    monto_efectivo: float = 0.0
+    monto_transferencia: float = 0.0
     estado: str
+    motivo_anulacion: Optional[str] = None
     items: List[VentaDetalleOut] = []
 
 # --- Purchases / Compras Models ---
@@ -318,9 +326,25 @@ class HourlySalesItem(BaseModel):
     monto: float
     tickets: int
 
+class TopProductSalesItem(BaseModel):
+    id_producto: int
+    codigo: str
+    nombre: str
+    unidades: float
+    ingresos: float
+    ganancia: float
+
 class DashboardKPIsOut(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
     ventas_hoy_total: float
     tickets_hoy_total: int
+    tickets_efectivo: int = 0
+    tickets_transferencia: int = 0
+    tickets_mixto: int = 0
+    tickets_anulados: int = 0
+    ventas_efectivo_total: float = 0.0
+    ventas_transferencia_total: float = 0.0
     ganancia_bruta_hoy: float
     margen_promedio_hoy: float
     valor_inventario_costo: float
@@ -330,6 +354,7 @@ class DashboardKPIsOut(BaseModel):
     costos_incrementados_recientes: int
     caja_activa: Optional[SesionCajaOut] = None
     ventas_por_hora: List[HourlySalesItem] = []
+    top_productos: List[TopProductSalesItem] = []
 
 # --- Backup Models ---
 class BackupResponse(BaseModel):

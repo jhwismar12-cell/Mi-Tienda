@@ -19,7 +19,11 @@ import {
   Truck,
   Scale,
   ArrowDown,
-  Camera
+  Camera,
+  PauseCircle,
+  PlayCircle,
+  Split,
+  X
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
@@ -47,14 +51,28 @@ export const PosScreen: React.FC = () => {
     setPaymentMethod,
     cashReceived,
     setCashReceived,
+    cartDiscount,
+    setCartDiscount,
+    mixedTransferAmount,
+    setMixedTransferAmount,
+    parkedCarts,
+    parkCurrentCart,
+    resumeParkedCart,
+    deleteParkedCart,
     confirmCheckout,
     isCheckingOut,
     setIsGlobalSearchOpen,
-    closeShiftAndGenerateReport,
     cashShift,
     setIsOpenShiftModalOpen,
     setActiveScreen,
-    showToast
+    showToast,
+    isOpenShiftModalOpen,
+    isAltaAlVueloOpen,
+    isNewProductModalOpen,
+    isReceiptModalOpen,
+    isReportZModalOpen,
+    isCashMovementModalOpen,
+    isGlobalSearchOpen
   } = useStore();
 
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -110,10 +128,37 @@ export const PosScreen: React.FC = () => {
   const totalArticles = cart.length;
   const totalUnits = Number(cart.reduce((sum, item) => sum + item.quantity, 0).toFixed(3));
   const subtotal = Number(cart.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2));
+  const discountNum = Number(Math.min(subtotal, Math.max(0, parseFloat(cartDiscount) || 0)).toFixed(2));
+  const finalTotal = Number(Math.max(0, subtotal - discountNum).toFixed(2));
   const totalCatalogStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
-  
+
   const cashReceivedNumber = parseFloat(cashReceived) || 0;
-  const change = paymentMethod === 'cash' ? Math.max(0, Number((cashReceivedNumber - subtotal).toFixed(2))) : 0;
+  const mixedTransferNumber = parseFloat(mixedTransferAmount) || 0;
+  const change =
+    paymentMethod === 'cash'
+      ? Math.max(0, Number((cashReceivedNumber - finalTotal).toFixed(2)))
+      : paymentMethod === 'mixed'
+        ? Math.max(0, Number((cashReceivedNumber + mixedTransferNumber - finalTotal).toFixed(2)))
+        : 0;
+
+  const isPaymentSufficient =
+    paymentMethod === 'transfer'
+      ? true
+      : paymentMethod === 'cash'
+        ? Math.round(cashReceivedNumber * 100) >= Math.round(finalTotal * 100)
+        : Math.round((cashReceivedNumber + mixedTransferNumber) * 100) >= Math.round(finalTotal * 100);
+
+  const anyModalOpen =
+    isBulkModalOpen ||
+    isSupplierModalOpen ||
+    isCameraScannerOpen ||
+    isOpenShiftModalOpen ||
+    isAltaAlVueloOpen ||
+    isNewProductModalOpen ||
+    isReceiptModalOpen ||
+    isReportZModalOpen ||
+    isCashMovementModalOpen ||
+    isGlobalSearchOpen;
 
   // Auto-focus barcode input only on desktop pointers (avoid popping virtual keyboard on tablet/phone)
   useEffect(() => {
@@ -122,10 +167,10 @@ export const PosScreen: React.FC = () => {
     }
   }, []);
 
-  // Keyboard shortcut handler (F1-F5, F12)
+  // Keyboard shortcut handler (F1, F2, F3=Search, F4, F5=Checkout, F6=Bulk, F7=Supplier, F8)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in a modal or text input (except barcode)
+      if (anyModalOpen) return;
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA';
 
@@ -141,9 +186,13 @@ export const PosScreen: React.FC = () => {
         barcodeInputRef.current?.select();
       } else if (e.key === 'F4') {
         e.preventDefault();
+        if (products[2]) addProductToCart(products[2], 1);
+      } else if (e.key === 'F8') {
+        e.preventDefault();
         if (products[3]) addProductToCart(products[3], 1);
       } else if (e.key === 'F5') {
         e.preventDefault();
+        if (isInput && target !== barcodeInputRef.current) return;
         if (cart.length > 0) {
           confirmCheckout();
         } else {
@@ -156,15 +205,12 @@ export const PosScreen: React.FC = () => {
         e.preventDefault();
         setInitialSupplierFilter(ALL_SUPPLIERS_KEY);
         setIsSupplierModalOpen(prev => !prev);
-      } else if (e.key === 'F12') {
-        e.preventDefault();
-        closeShiftAndGenerateReport();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products, cart, confirmCheckout, addProductToCart, closeShiftAndGenerateReport, showToast]);
+  }, [anyModalOpen, products, cart, confirmCheckout, addProductToCart, showToast]);
 
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -193,7 +239,7 @@ export const PosScreen: React.FC = () => {
 
   const handleQuickPay = (amount: number | 'exact') => {
     if (amount === 'exact') {
-      setCashReceived(subtotal.toFixed(2));
+      setCashReceived(finalTotal.toFixed(2));
     } else {
       setCashReceived(amount.toFixed(2));
     }
@@ -419,11 +465,15 @@ export const PosScreen: React.FC = () => {
           </div>
         )}
 
-        {/* Quick Access Bar (F1 - F4) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-          {[0, 1, 2, 3].map((idx) => {
+        {/* Quick Access Bar (F1, F2, F4, F8) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+          {([
+            { idx: 0, hotkey: '[F1]' },
+            { idx: 1, hotkey: '[F2]' },
+            { idx: 2, hotkey: '[F4]' },
+            { idx: 3, hotkey: '[F8]' }
+          ] as const).map(({ idx, hotkey }) => {
             const prod = products[idx];
-            const hotkey = `[F${idx + 1}]`;
             if (!prod) return null;
 
             const isOutOfStock = prod.stock <= 0;
@@ -460,12 +510,60 @@ export const PosScreen: React.FC = () => {
           })}
         </div>
 
+        {/* Ventas en Espera (Pausar / Retomar carrito) */}
+        {(cart.length > 0 || parkedCarts.length > 0) && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={() => parkCurrentCart()}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] text-[var(--ui-warning-text)] text-xs font-bold flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer"
+                title="Pausar esta venta para atender a otro cliente"
+              >
+                <PauseCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Pausar venta</span>
+              </button>
+            )}
+            {parkedCarts.map(pc => {
+              const pcTotal = pc.items.reduce((s, it) => s + it.subtotal, 0) - (pc.discount || 0);
+              return (
+                <div
+                  key={pc.id}
+                  className="inline-flex items-center rounded-lg bg-[var(--ui-surface)] border border-[var(--ui-brand-soft-border)] shadow-2xs overflow-hidden text-xs"
+                >
+                  <button
+                    type="button"
+                    onClick={() => resumeParkedCart(pc.id)}
+                    className="px-2.5 py-1.5 flex items-center gap-1.5 text-[var(--ui-brand-strong)] font-bold hover:bg-[var(--ui-brand-soft)] transition-colors cursor-pointer"
+                    title="Retomar esta venta en espera"
+                  >
+                    <PlayCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span className="max-w-[130px] truncate">{pc.label}</span>
+                    <span className="font-mono text-[11px] opacity-80">
+                      ({pc.items.length}) ${Math.max(0, pcTotal).toFixed(2)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteParkedCart(pc.id)}
+                    className="px-1.5 py-1.5 text-[var(--ui-subtle)] hover:text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] transition-colors cursor-pointer"
+                    title="Descartar venta en espera"
+                    aria-label="Descartar venta en espera"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Mobile/Tablet Quick Jump to Checkout Bar */}
         {cart.length > 0 && (
           <div className="lg:hidden mb-3 px-3.5 py-2.5 rounded-xl bg-[var(--ui-chrome)] text-white flex items-center justify-between gap-2 shadow-sm">
             <div className="text-xs">
               <span className="opacity-80">{totalArticles} {totalArticles === 1 ? 'ítem' : 'ítems'} · Total </span>
-              <strong className="font-mono text-sm text-[var(--ui-mint)]">${subtotal.toFixed(2)}</strong>
+              <strong className="font-mono text-sm text-[var(--ui-mint)]">${finalTotal.toFixed(2)}</strong>
             </div>
             <button
               type="button"
@@ -727,7 +825,7 @@ export const PosScreen: React.FC = () => {
               Artículos: <strong className="text-[var(--ui-text)]">{totalArticles}</strong> | Unidades: <strong className="text-[var(--ui-text)]">{totalUnits}</strong>
             </div>
             <div className="pos-shortcuts-hint hidden lg:flex flex-wrap gap-3 text-xs">
-              <span>[F1-F4] Rápido</span>
+              <span>[F1,F2,F4,F8] Rápido</span>
               <span>[F3] Buscar</span>
               <span>[F6] Granel</span>
               <span>[F7] Proveedor</span>
@@ -746,49 +844,88 @@ export const PosScreen: React.FC = () => {
       >
         <div>
           {/* Big Total Display Banner */}
-          <div className="pos-total bg-[var(--ui-chrome)] rounded-xl p-5 md:p-6 text-white mb-5 shadow-md flex flex-col items-end justify-center border border-[var(--ui-border-strong)]">
+          <div className="pos-total bg-[var(--ui-chrome)] rounded-xl p-5 md:p-6 text-white mb-4 shadow-md flex flex-col items-end justify-center border border-[var(--ui-border-strong)]">
             <span className="pos-total-caption text-xs uppercase tracking-widest text-[var(--ui-mint)] font-bold font-mono">
               TOTAL A COBRAR
             </span>
             <div className="pos-total-amount font-mono text-4xl md:text-5xl font-black text-white mt-2 tracking-tight flex items-baseline gap-1.5">
               <span className="text-2xl text-[var(--ui-mint)]">$</span>
-              <span>{subtotal.toFixed(2)}</span>
+              <span>{finalTotal.toFixed(2)}</span>
             </div>
             <span className="text-[11px] text-[var(--ui-chrome-muted)] mt-2">
               {totalUnits} unidades en {totalArticles} ítems
+              {discountNum > 0 ? ` · Desc. -$${discountNum.toFixed(2)}` : ''}
             </span>
           </div>
 
+          {/* Quick Discount Input */}
+          <div className="mb-4 flex items-center justify-between gap-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-xl px-3 py-2">
+            <label htmlFor="pos-discount" className="text-xs font-bold text-[var(--ui-secondary)]">
+              Descuento rápido ($)
+            </label>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-xs font-bold text-[var(--ui-muted)]">-$</span>
+              <input
+                id="pos-discount"
+                type="number"
+                step="0.05"
+                min="0"
+                max={subtotal}
+                value={cartDiscount}
+                onChange={(e) => setCartDiscount(e.target.value)}
+                className="w-20 px-2 py-1 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg font-mono text-xs font-bold text-right text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
+              />
+            </div>
+          </div>
+
           {/* Payment Method Selector */}
-          <div className="mb-5">
+          <div className="mb-4">
             <label className="pos-payment-label block text-xs font-bold text-[var(--ui-muted)] uppercase tracking-wider mb-2 font-mono">
               Forma de Pago
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setPaymentMethod('cash')}
-                className={`pos-pay-method py-3 px-3 rounded-xl border flex items-center justify-center gap-2 font-bold text-xs md:text-sm transition-all ${
+                className={`pos-pay-method py-2.5 px-2 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
                   paymentMethod === 'cash'
                     ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)] shadow-sm'
                     : 'bg-[var(--ui-surface-muted)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)]'
                 }`}
               >
-                <Banknote className="w-4 h-4" />
+                <Banknote className="w-4 h-4 shrink-0" />
                 <span>Efectivo</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setPaymentMethod('transfer')}
-                className={`pos-pay-method py-3 px-3 rounded-xl border flex items-center justify-center gap-2 font-bold text-xs md:text-sm transition-all ${
+                className={`pos-pay-method py-2.5 px-2 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
                   paymentMethod === 'transfer'
                     ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)] shadow-sm'
                     : 'bg-[var(--ui-surface-muted)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)]'
                 }`}
               >
-                <Building2 className="w-4 h-4" />
-                <span>Transferencia</span>
+                <Building2 className="w-4 h-4 shrink-0" />
+                <span>Transf.</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentMethod('mixed');
+                  const currentCash = parseFloat(cashReceived) || 0;
+                  const rem = Math.max(0, Number((finalTotal - currentCash).toFixed(2)));
+                  setMixedTransferAmount(rem.toFixed(2));
+                }}
+                className={`pos-pay-method py-2.5 px-2 rounded-xl border flex items-center justify-center gap-1.5 font-bold text-xs transition-all cursor-pointer ${
+                  paymentMethod === 'mixed'
+                    ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)] shadow-sm'
+                    : 'bg-[var(--ui-surface-muted)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)]'
+                }`}
+              >
+                <Split className="w-4 h-4 shrink-0" />
+                <span>Mixto</span>
               </button>
             </div>
           </div>
@@ -809,7 +946,7 @@ export const PosScreen: React.FC = () => {
                   min="0"
                   value={cashReceived}
                   onChange={(e) => setCashReceived(e.target.value)}
-                  placeholder={subtotal > 0 ? subtotal.toFixed(2) : '0.00'}
+                  placeholder={finalTotal > 0 ? finalTotal.toFixed(2) : '0.00'}
                   className="pos-cash-input w-full pl-9 pr-4 py-3 bg-[var(--ui-surface-muted)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl font-mono text-xl font-bold text-[var(--ui-text)] outline-none transition-all"
                 />
               </div>
@@ -853,17 +990,57 @@ export const PosScreen: React.FC = () => {
                 </button>
               </div>
             </div>
+          ) : paymentMethod === 'mixed' ? (
+            <div className="mb-4 space-y-2.5 p-3.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-xl">
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--ui-secondary)] mb-1">
+                  Monto en Efectivo ($)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={cashReceived}
+                  onChange={(e) => {
+                    setCashReceived(e.target.value);
+                    const ef = parseFloat(e.target.value) || 0;
+                    const rem = Math.max(0, Number((finalTotal - ef).toFixed(2)));
+                    setMixedTransferAmount(rem.toFixed(2));
+                  }}
+                  className="w-full px-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-lg font-mono text-base font-bold text-[var(--ui-text)] outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--ui-secondary)] mb-1">
+                  Monto por Transferencia ($)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={mixedTransferAmount}
+                  onChange={(e) => setMixedTransferAmount(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-lg font-mono text-base font-bold text-[var(--ui-text)] outline-none"
+                />
+              </div>
+              <div className="flex justify-between text-[11px] font-mono text-[var(--ui-muted)] pt-1">
+                <span>Suma ingresada:</span>
+                <strong className={isPaymentSufficient ? 'text-[var(--ui-brand-strong)]' : 'text-[var(--ui-danger-text)]'}>
+                  $ {(cashReceivedNumber + mixedTransferNumber).toFixed(2)} / $ {finalTotal.toFixed(2)}
+                </strong>
+              </div>
+            </div>
           ) : (
             <div className="mb-4 p-4 bg-[var(--ui-info-bg)] border border-[var(--ui-info-border)] rounded-lg text-xs text-[var(--ui-info-text)] flex-1">
               <p className="font-bold text-sm mb-1">Pago por Transferencia / DeUna / Banco</p>
               <p>
-                Verifique el comprobante de transferencia bancaria por <strong>${subtotal.toFixed(2)}</strong> antes de confirmar la venta.
+                Verifique el comprobante de transferencia bancaria por <strong>${finalTotal.toFixed(2)}</strong> antes de confirmar la venta.
               </p>
             </div>
           )}
 
           {/* Change / Vuelto Box */}
-          {paymentMethod === 'cash' && (
+          {(paymentMethod === 'cash' || (paymentMethod === 'mixed' && change > 0)) && (
             <div className="pos-change bg-[var(--ui-brand-soft)] border border-[var(--ui-brand-soft-border)] p-3.5 rounded-lg mb-4 flex justify-between items-center shadow-xs">
               <span className="font-bold text-sm md:text-base text-[var(--ui-brand-strong)]">
                 Cambio / Vuelto
@@ -885,9 +1062,9 @@ export const PosScreen: React.FC = () => {
             }
             confirmCheckout();
           }}
-          disabled={cart.length === 0 || isCheckingOut || !cashShift.isOpen || (paymentMethod === 'cash' && cashReceivedNumber < subtotal)}
+          disabled={cart.length === 0 || isCheckingOut || !cashShift.isOpen || !isPaymentSufficient}
           className={`pos-checkout w-full py-4 px-4 rounded-xl font-bold text-base md:text-lg shadow-md transition-all active:scale-[0.98] flex flex-col items-center justify-center relative overflow-hidden ${
-            cart.length > 0 && !isCheckingOut && cashShift.isOpen && (paymentMethod !== 'cash' || cashReceivedNumber >= subtotal)
+            cart.length > 0 && !isCheckingOut && cashShift.isOpen && isPaymentSufficient
               ? 'bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white cursor-pointer'
               : 'bg-[var(--ui-border-strong)] text-white/70 cursor-not-allowed'
           }`}

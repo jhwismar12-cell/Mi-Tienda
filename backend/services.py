@@ -14,11 +14,19 @@ from backend.models import (
     CompraRegistrarRequest, CompraOut, CompraDetalleOut,
     AjusteInventarioRequest, KardexMovimientoOut,
     CajaAbrirRequest, CajaCerrarRequest, CajaMovimientoRequest,
-    SesionCajaOut, CashMovementItem, DashboardKPIsOut, HourlySalesItem,
+    SesionCajaOut, CashMovementItem, DashboardKPIsOut, HourlySalesItem, TopProductSalesItem,
     BackupResponse,
     PedidoCreateRequest, PedidoUpdateRequest, PedidoOut, PedidoDetalleOut,
     TrabajadorOut, TrabajadorCreate
 )
+
+
+def now_local_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def today_local_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
 
 # --- Product Services ---
 def get_all_products() -> List[ProductoOut]:
@@ -136,10 +144,62 @@ def buscar_productos(query: str) -> List[ProductoOut]:
             )
         return result
 
+def validar_y_liberar_codigos_barras(
+    cursor: sqlite3.Cursor,
+    codigos_barras: List[str],
+    exclude_product_id: Optional[int] = None,
+) -> List[str]:
+    """Valida que los códigos de barras no pertenezcan a otro producto activo.
+    Si el código quedó atado a un producto inactivo/huérfano, lo libera automáticamente."""
+    cleaned: List[str] = []
+    seen = set()
+    for raw_bc in codigos_barras:
+        bc = (raw_bc or "").strip()
+        if not bc or bc in seen:
+            continue
+        seen.add(bc)
+
+        if exclude_product_id is not None:
+            row = cursor.execute(
+                """SELECT b.IDCodigo, b.IDProducto, p.Nombre, p.CodigoInterno, p.Activo
+                   FROM PRODUCTO_CODIGOS_BARRAS b
+                   LEFT JOIN PRODUCTOS p ON p.IDProducto = b.IDProducto
+                   WHERE b.CodigoBarras = ? AND b.IDProducto != ?
+                   LIMIT 1""",
+                (bc, exclude_product_id),
+            ).fetchone()
+        else:
+            row = cursor.execute(
+                """SELECT b.IDCodigo, b.IDProducto, p.Nombre, p.CodigoInterno, p.Activo
+                   FROM PRODUCTO_CODIGOS_BARRAS b
+                   LEFT JOIN PRODUCTOS p ON p.IDProducto = b.IDProducto
+                   WHERE b.CodigoBarras = ?
+                   LIMIT 1""",
+                (bc,),
+            ).fetchone()
+
+        if row:
+            if row["Nombre"] is None or int(row["Activo"] or 0) == 0:
+                cursor.execute(
+                    "DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDCodigo = ?",
+                    (row["IDCodigo"],),
+                )
+            else:
+                raise ValueError(
+                    f'El código de barras "{bc}" ya está registrado en el producto '
+                    f'"{row["Nombre"]}" (Cód: {row["CodigoInterno"]}). '
+                    f'Búscalo en el inventario para editarlo en lugar de duplicarlo.'
+                )
+        cleaned.append(bc)
+    return cleaned
+
+
 def crear_producto_rapido(data: ProductoRapidoRequest, id_usuario: int = 1) -> ProductoOut:
     with get_db() as conn:
         cursor = conn.cursor()
-        codigo_interno = data.codigo_barras
+        valid_barcodes = validar_y_liberar_codigos_barras(cursor, [data.codigo_barras])
+        codigo_barras = valid_barcodes[0] if valid_barcodes else data.codigo_barras.strip()
+        codigo_interno = codigo_barras
         cursor.execute("SELECT IDProducto FROM PRODUCTOS WHERE CodigoInterno = ?", (codigo_interno,))
         existing = cursor.fetchone()
         if existing:
@@ -158,7 +218,7 @@ def crear_producto_rapido(data: ProductoRapidoRequest, id_usuario: int = 1) -> P
         # Insert barcode
         cursor.execute(
             "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal, TipoCodigo) VALUES (?, ?, 1, 'EAN13')",
-            (pid, data.codigo_barras)
+            (pid, codigo_barras)
         )
 
         # Record Initial Kardex
@@ -190,7 +250,18 @@ def crear_producto_rapido(data: ProductoRapidoRequest, id_usuario: int = 1) -> P
 def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
     with get_db() as conn:
         cursor = conn.cursor()
-        codigo_interno = data.codigo_interno or (data.codigos_barras[0] if data.codigos_barras else f"INT-{int(datetime.now().timestamp())}")
+        valid_barcodes = validar_y_liberar_codigos_barras(cursor, data.codigos_barras or [])
+        codigo_interno = (data.codigo_interno or "").strip() or (valid_barcodes[0] if valid_barcodes else f"INT-{int(datetime.now().timestamp())}")
+        existing_sku = cursor.execute(
+            "SELECT IDProducto, Nombre, Activo FROM PRODUCTOS WHERE CodigoInterno = ? LIMIT 1",
+            (codigo_interno,),
+        ).fetchone()
+        if existing_sku:
+            if int(existing_sku["Activo"] or 0) == 1:
+                raise ValueError(
+                    f'El código interno "{codigo_interno}" ya está registrado en el producto "{existing_sku["Nombre"]}".'
+                )
+            codigo_interno = f"{codigo_interno}-{int(datetime.now().timestamp())}"
         stock_init = float(data.stock_inicial)
 
         cursor.execute(
@@ -206,12 +277,11 @@ def crear_producto(data: ProductoCreate, id_usuario: int = 1) -> ProductoOut:
         )
         pid = cursor.lastrowid
 
-        for idx, bc in enumerate(data.codigos_barras):
-            if bc.strip():
-                cursor.execute(
-                    "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, ?)",
-                    (pid, bc.strip(), 1 if idx == 0 else 0)
-                )
+        for idx, bc in enumerate(valid_barcodes):
+            cursor.execute(
+                "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, ?)",
+                (pid, bc, 1 if idx == 0 else 0)
+            )
 
         if stock_init > 0:
             cursor.execute(
@@ -455,11 +525,43 @@ def abrir_caja(data: CajaAbrirRequest) -> SesionCajaOut:
             raise ValueError("Ya hay una sesión de caja abierta. Ciérrala antes de abrir otra.")
         cursor.execute(
             """INSERT INTO SESIONES_CAJA (
-                IDUsuario, MontoInicial, TotalVentasEfectivo, TotalVentasTransferencia, TotalRetiros, TotalEsperado, Estado, Observaciones
-            ) VALUES (?, ?, 0.0, 0.0, 0.0, ?, 'ABIERTA', ?)""",
-            (data.id_usuario or 1, data.monto_inicial, data.monto_inicial, data.observaciones or "Apertura de turno")
+                IDUsuario, FechaApertura, MontoInicial, TotalVentasEfectivo, TotalVentasTransferencia, TotalRetiros, TotalEsperado, Estado, Observaciones
+            ) VALUES (?, ?, ?, 0.0, 0.0, 0.0, ?, 'ABIERTA', ?)""",
+            (data.id_usuario or 1, now_local_str(), data.monto_inicial, data.monto_inicial, data.observaciones or "Apertura de turno")
         )
     return obtener_caja_activa()
+
+def obtener_historial_caja(limit: int = 30) -> List[SesionCajaOut]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            """SELECT s.*, COALESCE(u.NombreCompleto, 'Cajero') as CajeroNombre
+               FROM SESIONES_CAJA s
+               LEFT JOIN USUARIOS u ON s.IDUsuario = u.IDUsuario
+               ORDER BY s.IDSesionCaja DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [
+            SesionCajaOut(
+                id_sesion_caja=r["IDSesionCaja"],
+                id_usuario=r["IDUsuario"],
+                cajero_nombre=r["CajeroNombre"],
+                fecha_apertura=str(r["FechaApertura"]),
+                fecha_cierre=str(r["FechaCierre"]) if r["FechaCierre"] else None,
+                monto_inicial=float(r["MontoInicial"]),
+                total_ventas_efectivo=float(r["TotalVentasEfectivo"]),
+                total_ventas_transferencia=float(r["TotalVentasTransferencia"]),
+                total_retiros=float(r["TotalRetiros"]),
+                total_esperado=float(r["TotalEsperado"]),
+                total_real_entregado=float(r["TotalRealEntregado"]) if r["TotalRealEntregado"] is not None else None,
+                diferencia=float(r["Diferencia"]) if r["Diferencia"] is not None else None,
+                estado=r["Estado"],
+                observaciones=r["Observaciones"],
+                movimientos=[],
+            )
+            for r in rows
+        ]
 
 def cerrar_caja(data: CajaCerrarRequest) -> SesionCajaOut:
     with get_db() as conn:
@@ -477,9 +579,9 @@ def cerrar_caja(data: CajaCerrarRequest) -> SesionCajaOut:
 
         cursor.execute(
             """UPDATE SESIONES_CAJA 
-               SET Estado = 'CERRADA', FechaCierre = CURRENT_TIMESTAMP, TotalRealEntregado = ?, Diferencia = ?, Observaciones = ?
+               SET Estado = 'CERRADA', FechaCierre = ?, TotalRealEntregado = ?, Diferencia = ?, Observaciones = ?
                WHERE IDSesionCaja = ?""",
-            (real, diferencia, data.observaciones, sid)
+            (now_local_str(), real, diferencia, data.observaciones, sid)
         )
         
         cursor.execute(
@@ -627,13 +729,38 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             })
 
         subtotal_total = round(subtotal_total, 2)
-        total_final = round(subtotal_total - float(data.descuento or 0.0) + float(data.impuestos or 0.0), 2)
+        descuento_global = round(float(data.descuento or 0.0), 2)
+        impuestos_total = round(float(data.impuestos or 0.0), 2)
+        total_final = round(subtotal_total - descuento_global + impuestos_total, 2)
         if total_final < 0:
             raise ValueError("El descuento supera el importe de la venta.")
-        monto_rec = float(data.monto_recibido) if data.metodo_pago == "EFECTIVO" else float(data.monto_recibido or total_final)
-        if data.metodo_pago == "EFECTIVO" and round(monto_rec, 2) < total_final:
-            raise ValueError("El efectivo recibido es insuficiente para cubrir el total.")
-        cambio = max(0.0, round(monto_rec - total_final, 2)) if data.metodo_pago == "EFECTIVO" else 0.0
+
+        if data.metodo_pago == "EFECTIVO":
+            monto_rec = round(float(data.monto_recibido), 2)
+            if monto_rec < total_final:
+                raise ValueError("El efectivo recibido es insuficiente para cubrir el total.")
+            cambio = max(0.0, round(monto_rec - total_final, 2))
+            monto_ef_neto = total_final
+            monto_tr_neto = 0.0
+        elif data.metodo_pago == "TRANSFERENCIA":
+            monto_rec = total_final
+            cambio = 0.0
+            monto_ef_neto = 0.0
+            monto_tr_neto = total_final
+        else:
+            # Pago MIXTO (Efectivo + Transferencia)
+            raw_ef = float(data.monto_efectivo) if data.monto_efectivo is not None else float(data.monto_recibido or 0.0)
+            raw_tr = float(data.monto_transferencia) if data.monto_transferencia is not None else max(0.0, round(total_final - raw_ef, 2))
+            raw_ef = round(raw_ef, 2)
+            raw_tr = round(raw_tr, 2)
+            if raw_ef < 0 or raw_tr < 0:
+                raise ValueError("Los montos de pago mixto no pueden ser negativos.")
+            if round(raw_ef + raw_tr, 2) < total_final:
+                raise ValueError("La suma de efectivo y transferencia no cubre el total de la venta.")
+            cambio = max(0.0, round((raw_ef + raw_tr) - total_final, 2))
+            monto_tr_neto = min(raw_tr, total_final)
+            monto_ef_neto = round(total_final - monto_tr_neto, 2)
+            monto_rec = raw_ef
 
         # Generate Ticket Number
         cursor.execute("SELECT COALESCE(MAX(IDVenta), 0) FROM VENTAS")
@@ -641,15 +768,16 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
         numero_venta = f"TK-{4094 + total_sales_count}"
 
         # 1. Insert Venta Cabecera (FechaHora in local time; SQLite CURRENT_TIMESTAMP is UTC)
-        fecha_venta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fecha_venta = now_local_str()
         cursor.execute(
             """INSERT INTO VENTAS (
                 IDSesionCaja, IDUsuario, NumeroVenta, FechaHora, Subtotal, Descuento, Impuestos, Total,
-                MetodoPago, MontoRecibido, Cambio, CajeroNombre, Estado
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMADA')""",
+                MetodoPago, MontoRecibido, Cambio, MontoEfectivo, MontoTransferencia, CajeroNombre, Estado
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMADA')""",
             (
-                sid, user_id, numero_venta, fecha_venta, subtotal_total, data.descuento or 0.0,
-                data.impuestos or 0.0, total_final, data.metodo_pago, monto_rec, cambio, cajero_name
+                sid, user_id, numero_venta, fecha_venta, subtotal_total, descuento_global,
+                impuestos_total, total_final, data.metodo_pago, monto_rec, cambio,
+                monto_ef_neto, monto_tr_neto, cajero_name
             )
         )
         vid = cursor.lastrowid
@@ -669,16 +797,16 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             stock_ant = d["stock_actual"]
             stock_post = max(0.0, round(stock_ant - d["cantidad"], 3))
             cursor.execute(
-                "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
-                (stock_post, d["id_producto"])
+                "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = ? WHERE IDProducto = ?",
+                (stock_post, fecha_venta, d["id_producto"])
             )
 
             # Insert into Ledger
             cursor.execute(
                 """INSERT INTO MOVIMIENTOS_INVENTARIO (
-                    IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
-                ) VALUES (?, 'SALIDA_VENTA', ?, ?, ?, ?, ?, ?)""",
-                (d["id_producto"], -d["cantidad"], stock_ant, stock_post, numero_venta, user_id, f"Venta ticket #{numero_venta} (A cargo: {cajero_name})")
+                    FechaHora, IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
+                ) VALUES (?, ?, 'SALIDA_VENTA', ?, ?, ?, ?, ?, ?)""",
+                (fecha_venta, d["id_producto"], -d["cantidad"], stock_ant, stock_post, numero_venta, user_id, f"Venta ticket #{numero_venta} (A cargo: {cajero_name})")
             )
 
             items_out.append(
@@ -696,19 +824,28 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             )
 
         # 3. Update Cash Register Totals
-        if data.metodo_pago == "EFECTIVO":
+        if monto_ef_neto > 0 and monto_tr_neto > 0:
+            cursor.execute(
+                """UPDATE SESIONES_CAJA 
+                   SET TotalVentasEfectivo = TotalVentasEfectivo + ?,
+                       TotalVentasTransferencia = TotalVentasTransferencia + ?,
+                       TotalEsperado = TotalEsperado + ? 
+                   WHERE IDSesionCaja = ?""",
+                (monto_ef_neto, monto_tr_neto, monto_ef_neto, sid)
+            )
+        elif monto_ef_neto > 0:
             cursor.execute(
                 """UPDATE SESIONES_CAJA 
                    SET TotalVentasEfectivo = TotalVentasEfectivo + ?, TotalEsperado = TotalEsperado + ? 
                    WHERE IDSesionCaja = ?""",
-                (total_final, total_final, sid)
+                (monto_ef_neto, monto_ef_neto, sid)
             )
-        else:
+        elif monto_tr_neto > 0:
             cursor.execute(
                 """UPDATE SESIONES_CAJA 
                    SET TotalVentasTransferencia = TotalVentasTransferencia + ? 
                    WHERE IDSesionCaja = ?""",
-                (total_final, sid)
+                (monto_tr_neto, sid)
             )
 
         result = VentaOut(
@@ -719,12 +856,14 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
             numero_venta=numero_venta,
             fecha_hora=fecha_venta,
             subtotal=subtotal_total,
-            descuento=data.descuento or 0.0,
-            impuestos=data.impuestos or 0.0,
+            descuento=descuento_global,
+            impuestos=impuestos_total,
             total=total_final,
             metodo_pago=data.metodo_pago,
             monto_recibido=monto_rec,
             cambio=cambio,
+            monto_efectivo=monto_ef_neto,
+            monto_transferencia=monto_tr_neto,
             estado="CONFIRMADA",
             items=items_out
         )
@@ -734,6 +873,125 @@ def cobrar_venta(data: VentaCobrarRequest) -> VentaOut:
                 (data.clave_idempotencia, request_hash, vid, result.model_dump_json())
             )
         return result
+
+
+def anular_venta(id_venta: int, motivo: str, id_usuario: int = 1) -> VentaOut:
+    motivo_clean = (motivo or "").strip()
+    if len(motivo_clean) < 3:
+        raise ValueError("Debes indicar un motivo para anular la venta.")
+
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        sale = cursor.execute(
+            """SELECT v.*, COALESCE(v.CajeroNombre, u.NombreCompleto, 'Cajero') as CajeroNombreResuelto
+               FROM VENTAS v
+               LEFT JOIN USUARIOS u ON v.IDUsuario = u.IDUsuario
+               WHERE v.IDVenta = ?""",
+            (id_venta,),
+        ).fetchone()
+        if not sale:
+            raise ValueError("Venta no encontrada.")
+        if sale["Estado"] == "ANULADA":
+            raise ValueError("Esta venta ya se encuentra anulada.")
+
+        fecha_anulacion = now_local_str()
+        cursor.execute(
+            "UPDATE VENTAS SET Estado = 'ANULADA', MotivoAnulacion = ? WHERE IDVenta = ?",
+            (motivo_clean, id_venta),
+        )
+
+        # Restore stock and log Kardex ANULACION_VENTA
+        det_rows = cursor.execute(
+            """SELECT d.*, p.Nombre as ProductoNombre, p.CodigoInterno as ProductoCodigo, p.StockActual
+               FROM VENTAS_DETALLE d
+               JOIN PRODUCTOS p ON d.IDProducto = p.IDProducto
+               WHERE d.IDVenta = ?""",
+            (id_venta,),
+        ).fetchall()
+
+        items_out: List[VentaDetalleOut] = []
+        for dr in det_rows:
+            cant = float(dr["Cantidad"])
+            stock_ant = float(dr["StockActual"])
+            stock_post = round(stock_ant + cant, 3)
+            cursor.execute(
+                "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = ? WHERE IDProducto = ?",
+                (stock_post, fecha_anulacion, dr["IDProducto"]),
+            )
+            cursor.execute(
+                """INSERT INTO MOVIMIENTOS_INVENTARIO (
+                    FechaHora, IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
+                ) VALUES (?, ?, 'ANULACION_VENTA', ?, ?, ?, ?, ?, ?)""",
+                (
+                    fecha_anulacion,
+                    dr["IDProducto"],
+                    cant,
+                    stock_ant,
+                    stock_post,
+                    sale["NumeroVenta"],
+                    id_usuario,
+                    f"Anulación ticket #{sale['NumeroVenta']}: {motivo_clean}",
+                ),
+            )
+            items_out.append(
+                VentaDetalleOut(
+                    id_detalle_venta=dr["IDDetalleVenta"],
+                    id_producto=dr["IDProducto"],
+                    producto_nombre=dr["ProductoNombre"],
+                    producto_codigo=dr["ProductoCodigo"],
+                    cantidad=cant,
+                    precio_unitario=float(dr["PrecioUnitario"]),
+                    costo_unitario=float(dr["CostoUnitarioAlMomento"]),
+                    descuento=float(dr["Descuento"]),
+                    subtotal=float(dr["Subtotal"]),
+                )
+            )
+
+        # Reverse active cash register session totals if still open
+        sess = cursor.execute(
+            "SELECT IDSesionCaja, Estado FROM SESIONES_CAJA WHERE IDSesionCaja = ?",
+            (sale["IDSesionCaja"],),
+        ).fetchone()
+        total_sale = float(sale["Total"])
+        ef_part = float(sale["MontoEfectivo"]) if "MontoEfectivo" in sale.keys() and sale["MontoEfectivo"] is not None else 0.0
+        tr_part = float(sale["MontoTransferencia"]) if "MontoTransferencia" in sale.keys() and sale["MontoTransferencia"] is not None else 0.0
+        if ef_part == 0.0 and tr_part == 0.0 and total_sale > 0:
+            if sale["MetodoPago"] == "EFECTIVO":
+                ef_part = total_sale
+            else:
+                tr_part = total_sale
+
+        if sess and sess["Estado"] == "ABIERTA":
+            cursor.execute(
+                """UPDATE SESIONES_CAJA
+                   SET TotalVentasEfectivo = MAX(0, TotalVentasEfectivo - ?),
+                       TotalVentasTransferencia = MAX(0, TotalVentasTransferencia - ?),
+                       TotalEsperado = TotalEsperado - ?
+                   WHERE IDSesionCaja = ?""",
+                (ef_part, tr_part, ef_part, sess["IDSesionCaja"]),
+            )
+
+        return VentaOut(
+            id_venta=id_venta,
+            id_sesion_caja=sale["IDSesionCaja"],
+            id_usuario=sale["IDUsuario"],
+            cajero_nombre=sale["CajeroNombreResuelto"],
+            numero_venta=sale["NumeroVenta"],
+            fecha_hora=str(sale["FechaHora"]),
+            subtotal=float(sale["Subtotal"]),
+            descuento=float(sale["Descuento"]),
+            impuestos=float(sale["Impuestos"]),
+            total=total_sale,
+            metodo_pago=sale["MetodoPago"],
+            monto_recibido=float(sale["MontoRecibido"]),
+            cambio=float(sale["Cambio"]),
+            monto_efectivo=ef_part,
+            monto_transferencia=tr_part,
+            estado="ANULADA",
+            motivo_anulacion=motivo_clean,
+            items=items_out,
+        )
 
 # --- Purchases / Compras Reception Services ---
 def registrar_compra(data: CompraRegistrarRequest) -> CompraOut:
@@ -755,40 +1013,47 @@ def registrar_compra(data: CompraRegistrarRequest) -> CompraOut:
             item_sub = round((cant * costo) - desc, 4)
             subtotal_total += item_sub
 
-            # Resolve product
+            # Resolve product (only active products)
             pid = it.id_producto
             if not pid and it.codigo:
                 cursor.execute(
                     """SELECT p.IDProducto FROM PRODUCTOS p 
                        LEFT JOIN PRODUCTO_CODIGOS_BARRAS b ON p.IDProducto = b.IDProducto 
-                       WHERE p.CodigoInterno = ? OR b.CodigoBarras = ? LIMIT 1""",
+                       WHERE (p.CodigoInterno = ? OR b.CodigoBarras = ?) AND p.Activo = 1 LIMIT 1""",
                     (it.codigo, it.codigo)
                 )
                 p_row = cursor.fetchone()
                 if p_row:
                     pid = p_row["IDProducto"]
                 else:
-                    # Create new product on the fly
+                    # Create new product on the fly linked to supplier
                     p_name = it.nombre or f"Producto {it.codigo}"
                     p_sale = float(it.precio_venta_sugerido or (costo * 1.3))
+                    valid_bcs = validar_y_liberar_codigos_barras(cursor, [it.codigo])
+                    codigo_int = it.codigo.strip()
+                    if cursor.execute("SELECT 1 FROM PRODUCTOS WHERE CodigoInterno = ?", (codigo_int,)).fetchone():
+                        codigo_int = f"AUT-{int(datetime.now().timestamp())}-{len(processed_items)}"
                     cursor.execute(
                         """INSERT INTO PRODUCTOS (
-                            IDCategoria, CodigoInterno, Nombre, PrecioCompraActual, PrecioVentaActual,
+                            IDCategoria, IDProveedor, CodigoInterno, Nombre, PrecioCompraActual, PrecioVentaActual,
                             MargenMinimoPorcentaje, StockMinimo, StockActual, PermiteFraccion, Activo
-                        ) VALUES (1, ?, ?, ?, ?, 15.0, 5.0, 0.0, 0, 1)""",
-                        (it.codigo, p_name, costo, p_sale)
+                        ) VALUES (1, ?, ?, ?, ?, ?, 15.0, 5.0, 0.0, 0, 1)""",
+                        (data.id_proveedor, codigo_int, p_name, costo, p_sale)
                     )
                     pid = cursor.lastrowid
-                    cursor.execute(
-                        "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, 1)",
-                        (pid, it.codigo)
-                    )
+                    if valid_bcs:
+                        cursor.execute(
+                            "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, 1)",
+                            (pid, valid_bcs[0])
+                        )
 
             if not pid:
                 raise ValueError(f"No se pudo identificar el producto para el item {it.nombre or it.codigo}")
 
             cursor.execute("SELECT IDProducto, CodigoInterno, Nombre, PrecioCompraActual, PrecioVentaActual, StockActual FROM PRODUCTOS WHERE IDProducto = ?", (pid,))
             prod = cursor.fetchone()
+            if not prod:
+                raise ValueError(f"Producto con ID {pid} no encontrado.")
 
             processed_items.append({
                 "id_producto": pid,
@@ -807,12 +1072,13 @@ def registrar_compra(data: CompraRegistrarRequest) -> CompraOut:
         subtotal_total = round(subtotal_total, 2)
         total_final = round(subtotal_total - float(data.descuento or 0.0) + float(data.impuestos or 0.0), 2)
 
-        # 1. Insert Compra Cabecera
+        # 1. Insert Compra Cabecera (local timestamp)
+        fecha_compra = now_local_str()
         cursor.execute(
             """INSERT INTO COMPRAS (
-                IDProveedor, IDUsuario, NumeroDocumento, Subtotal, Descuento, Impuestos, Total, Estado, Observaciones
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMADA', ?)""",
-            (data.id_proveedor, user_id, data.numero_documento, subtotal_total, data.descuento or 0.0, data.impuestos or 0.0, total_final, data.observaciones)
+                IDProveedor, IDUsuario, NumeroDocumento, FechaHora, Subtotal, Descuento, Impuestos, Total, Estado, Observaciones
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMADA', ?)""",
+            (data.id_proveedor, user_id, data.numero_documento, fecha_compra, subtotal_total, data.descuento or 0.0, data.impuestos or 0.0, total_final, data.observaciones)
         )
         cid = cursor.lastrowid
 
@@ -838,17 +1104,17 @@ def registrar_compra(data: CompraRegistrarRequest) -> CompraOut:
 
             # Update product stock & cost
             cursor.execute(
-                "UPDATE PRODUCTOS SET StockActual = ?, PrecioCompraActual = ?, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
-                (stock_post, it["costo_unitario"], it["id_producto"])
+                "UPDATE PRODUCTOS SET StockActual = ?, PrecioCompraActual = ?, FechaModificacion = ? WHERE IDProducto = ?",
+                (stock_post, it["costo_unitario"], fecha_compra, it["id_producto"])
             )
 
             # Check price history for purchase
             if abs(it["costo_unitario"] - it["prev_cost"]) > 0.001:
                 cursor.execute(
                     """INSERT INTO HISTORIAL_PRECIOS (
-                        IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo
-                    ) VALUES (?, 'COMPRA', ?, ?, ?, ?)""",
-                    (it["id_producto"], it["prev_cost"], it["costo_unitario"], user_id, f"Compra Factura #{data.numero_documento}")
+                        FechaHora, IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo
+                    ) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?)""",
+                    (fecha_compra, it["id_producto"], it["prev_cost"], it["costo_unitario"], user_id, f"Compra Factura #{data.numero_documento}")
                 )
 
             # If suggested sale price given and changed
@@ -861,17 +1127,17 @@ def registrar_compra(data: CompraRegistrarRequest) -> CompraOut:
                     )
                     cursor.execute(
                         """INSERT INTO HISTORIAL_PRECIOS (
-                            IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo
-                        ) VALUES (?, 'VENTA', ?, ?, ?, ?)""",
-                        (it["id_producto"], it["prev_sale"], p_sug, user_id, f"Actualizacion por Compra #{data.numero_documento}")
+                            FechaHora, IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo
+                        ) VALUES (?, ?, 'VENTA', ?, ?, ?, ?)""",
+                        (fecha_compra, it["id_producto"], it["prev_sale"], p_sug, user_id, f"Actualizacion por Compra #{data.numero_documento}")
                     )
 
             # Insert into Kardex Ledger
             cursor.execute(
                 """INSERT INTO MOVIMIENTOS_INVENTARIO (
-                    IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
-                ) VALUES (?, 'ENTRADA_COMPRA', ?, ?, ?, ?, ?, ?)""",
-                (it["id_producto"], it["cantidad"], stock_ant, stock_post, data.numero_documento, user_id, f"Ingreso compra Factura #{data.numero_documento}")
+                    FechaHora, IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
+                ) VALUES (?, ?, 'ENTRADA_COMPRA', ?, ?, ?, ?, ?, ?)""",
+                (fecha_compra, it["id_producto"], it["cantidad"], stock_ant, stock_post, data.numero_documento, user_id, f"Ingreso compra Factura #{data.numero_documento}")
             )
 
             details_out.append(
@@ -926,17 +1192,18 @@ def ajustar_inventario(data: AjusteInventarioRequest) -> KardexMovimientoOut:
             delta = -cant
             stock_post = max(0.0, round(stock_ant - cant, 3))
 
+        fecha_ajuste = now_local_str()
         cursor.execute(
-            "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = CURRENT_TIMESTAMP WHERE IDProducto = ?",
-            (stock_post, data.id_producto)
+            "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = ? WHERE IDProducto = ?",
+            (stock_post, fecha_ajuste, data.id_producto)
         )
 
         doc_ref = f"AJ-{int(datetime.now().timestamp())}"
         cursor.execute(
             """INSERT INTO MOVIMIENTOS_INVENTARIO (
-                IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (data.id_producto, data.tipo_ajuste, delta, stock_ant, stock_post, doc_ref, user_id, data.motivo or "Ajuste manual de inventario")
+                FechaHora, IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior, ReferenciaID, IDUsuario, Observacion
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fecha_ajuste, data.id_producto, data.tipo_ajuste, delta, stock_ant, stock_post, doc_ref, user_id, data.motivo or "Ajuste manual de inventario")
         )
         mid = cursor.lastrowid
 
@@ -1002,32 +1269,62 @@ def obtener_kardex(id_producto: Optional[int] = None, fecha_inicio: Optional[str
         ]
 
 # --- Dashboard KPIs ---
-def obtener_dashboard_kpis() -> DashboardKPIsOut:
+def obtener_dashboard_kpis(
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+) -> DashboardKPIsOut:
     with get_db() as conn:
         cursor = conn.cursor()
-        today_date = datetime.now().strftime("%Y-%m-%d")
+        f_ini = (fecha_inicio or today_local_str()).strip()[:10]
+        f_fin = (fecha_fin or f_ini).strip()[:10]
+        if f_fin < f_ini:
+            f_ini, f_fin = f_fin, f_ini
+        start_ts = f"{f_ini} 00:00:00"
+        end_ts = f"{f_fin} 23:59:59"
 
-        # Today's sales
+        # Confirmed sales in range
         cursor.execute(
-            """SELECT COUNT(*) as TicketsTotal, COALESCE(SUM(Total), 0) as VentasTotal 
-               FROM VENTAS 
-               WHERE FechaHora LIKE ? AND Estado = 'CONFIRMADA'""",
-            (f"{today_date}%",)
+            """SELECT
+                   COUNT(*) as TicketsTotal,
+                   COALESCE(SUM(Total), 0) as VentasTotal,
+                   COALESCE(SUM(Descuento), 0) as DescuentosTotal,
+                   SUM(CASE WHEN MetodoPago = 'EFECTIVO' THEN 1 ELSE 0 END) as TicketsEf,
+                   SUM(CASE WHEN MetodoPago = 'TRANSFERENCIA' THEN 1 ELSE 0 END) as TicketsTr,
+                   SUM(CASE WHEN MetodoPago = 'MIXTO' THEN 1 ELSE 0 END) as TicketsMix,
+                   COALESCE(SUM(CASE WHEN MontoEfectivo > 0 OR MontoTransferencia > 0 THEN MontoEfectivo WHEN MetodoPago = 'EFECTIVO' THEN Total ELSE 0 END), 0) as VentasEf,
+                   COALESCE(SUM(CASE WHEN MontoEfectivo > 0 OR MontoTransferencia > 0 THEN MontoTransferencia WHEN MetodoPago != 'EFECTIVO' THEN Total ELSE 0 END), 0) as VentasTr
+               FROM VENTAS
+               WHERE FechaHora >= ? AND FechaHora <= ? AND Estado = 'CONFIRMADA'""",
+            (start_ts, end_ts)
         )
         sales_agg = cursor.fetchone()
-        tickets_total = sales_agg["TicketsTotal"]
-        ventas_total = float(sales_agg["VentasTotal"])
+        tickets_total = int(sales_agg["TicketsTotal"] or 0)
+        ventas_total = round(float(sales_agg["VentasTotal"] or 0.0), 2)
+        descuentos_total = round(float(sales_agg["DescuentosTotal"] or 0.0), 2)
+        tickets_ef = int(sales_agg["TicketsEf"] or 0)
+        tickets_tr = int(sales_agg["TicketsTr"] or 0)
+        tickets_mix = int(sales_agg["TicketsMix"] or 0)
+        ventas_ef = round(float(sales_agg["VentasEf"] or 0.0), 2)
+        ventas_tr = round(float(sales_agg["VentasTr"] or 0.0), 2)
 
-        # Gross profit today
-        cursor.execute(
-            """SELECT COALESCE(SUM((d.PrecioUnitario - d.CostoUnitarioAlMomento) * d.Cantidad), 0) as Ganancia 
-               FROM VENTAS_DETALLE d 
-               JOIN VENTAS v ON d.IDVenta = v.IDVenta 
-               WHERE v.FechaHora LIKE ? AND v.Estado = 'CONFIRMADA'""",
-            (f"{today_date}%",)
+        # Voided tickets in range
+        tickets_anulados = int(
+            cursor.execute(
+                "SELECT COUNT(*) FROM VENTAS WHERE FechaHora >= ? AND FechaHora <= ? AND Estado = 'ANULADA'",
+                (start_ts, end_ts),
+            ).fetchone()[0]
         )
-        ganancia_total = float(cursor.fetchone()["Ganancia"])
-        margen_prom = round((ganancia_total / ventas_total * 100), 1) if ventas_total > 0 else 30.0
+
+        # Gross profit in range
+        cursor.execute(
+            """SELECT COALESCE(SUM((d.PrecioUnitario - d.CostoUnitarioAlMomento) * d.Cantidad - d.Descuento), 0) as Ganancia
+               FROM VENTAS_DETALLE d
+               JOIN VENTAS v ON d.IDVenta = v.IDVenta
+               WHERE v.FechaHora >= ? AND v.FechaHora <= ? AND v.Estado = 'CONFIRMADA'""",
+            (start_ts, end_ts)
+        )
+        ganancia_total = round(float(cursor.fetchone()["Ganancia"] or 0.0) - descuentos_total, 2)
+        margen_prom = round((ganancia_total / ventas_total * 100), 1) if ventas_total > 0 else 0.0
 
         # Inventory valuations & alerts
         cursor.execute("SELECT PrecioCompraActual, PrecioVentaActual, StockActual, StockMinimo FROM PRODUCTOS WHERE Activo = 1")
@@ -1037,43 +1334,70 @@ def obtener_dashboard_kpis() -> DashboardKPIsOut:
         stock_bajo = sum(1 for p in prods if 0 < float(p["StockActual"]) <= float(p["StockMinimo"]))
         agotados = sum(1 for p in prods if float(p["StockActual"]) <= 0)
 
-        # Recent cost increase count
+        # Recent cost increase count in range
         cursor.execute(
-            """SELECT COUNT(*) FROM HISTORIAL_PRECIOS 
-               WHERE TipoPrecio = 'COMPRA' AND PrecioNuevo > PrecioAnterior AND FechaHora LIKE ?""",
-            (f"{today_date}%",)
+            """SELECT COUNT(*) FROM HISTORIAL_PRECIOS
+               WHERE TipoPrecio = 'COMPRA' AND PrecioNuevo > PrecioAnterior
+                 AND FechaHora >= ? AND FechaHora <= ?""",
+            (start_ts, end_ts)
         )
-        costos_incr = cursor.fetchone()[0]
+        costos_incr = int(cursor.fetchone()[0])
 
-        # Hourly sales
+        # Hourly sales in range
         cursor.execute(
-            """SELECT strftime('%H:00', FechaHora) as Hora, SUM(Total) as Monto, COUNT(*) as Tickets 
-               FROM VENTAS 
-               WHERE FechaHora LIKE ? AND Estado = 'CONFIRMADA' 
+            """SELECT strftime('%H:00', FechaHora) as Hora, SUM(Total) as Monto, COUNT(*) as Tickets
+               FROM VENTAS
+               WHERE FechaHora >= ? AND FechaHora <= ? AND Estado = 'CONFIRMADA'
                GROUP BY Hora ORDER BY Hora ASC""",
-            (f"{today_date}%",)
+            (start_ts, end_ts)
         )
         hourly_rows = cursor.fetchall()
         ventas_hora = [
-            HourlySalesItem(hora=hr["Hora"], monto=float(hr["Monto"]), tickets=hr["Tickets"])
-            for hr in hourly_rows
+            HourlySalesItem(hora=hr["Hora"], monto=round(float(hr["Monto"]), 2), tickets=int(hr["Tickets"]))
+            for hr in hourly_rows if hr["Hora"]
         ]
-        if not ventas_hora:
-            ventas_hora = [
-                HourlySalesItem(hora="08:00", monto=0, tickets=0),
-                HourlySalesItem(hora="10:00", monto=0, tickets=0),
-                HourlySalesItem(hora="12:00", monto=0, tickets=0),
-                HourlySalesItem(hora="14:00", monto=0, tickets=0),
-                HourlySalesItem(hora="16:00", monto=0, tickets=0),
-                HourlySalesItem(hora="18:00", monto=0, tickets=0)
-            ]
+
+        # Top 10 best-selling products in range
+        cursor.execute(
+            """SELECT d.IDProducto, p.CodigoInterno, p.Nombre,
+                      SUM(d.Cantidad) as Unidades,
+                      SUM(d.Subtotal) as Ingresos,
+                      SUM((d.PrecioUnitario - d.CostoUnitarioAlMomento) * d.Cantidad - d.Descuento) as Ganancia
+               FROM VENTAS_DETALLE d
+               JOIN VENTAS v ON d.IDVenta = v.IDVenta
+               JOIN PRODUCTOS p ON d.IDProducto = p.IDProducto
+               WHERE v.FechaHora >= ? AND v.FechaHora <= ? AND v.Estado = 'CONFIRMADA'
+               GROUP BY d.IDProducto, p.CodigoInterno, p.Nombre
+               ORDER BY Ingresos DESC, Unidades DESC
+               LIMIT 10""",
+            (start_ts, end_ts)
+        )
+        top_productos = [
+            TopProductSalesItem(
+                id_producto=r["IDProducto"],
+                codigo=r["CodigoInterno"],
+                nombre=r["Nombre"],
+                unidades=round(float(r["Unidades"]), 3),
+                ingresos=round(float(r["Ingresos"]), 2),
+                ganancia=round(float(r["Ganancia"]), 2),
+            )
+            for r in cursor.fetchall()
+        ]
 
         caja_act = obtener_caja_activa()
 
         return DashboardKPIsOut(
-            ventas_hoy_total=round(ventas_total, 2),
+            fecha_inicio=f_ini,
+            fecha_fin=f_fin,
+            ventas_hoy_total=ventas_total,
             tickets_hoy_total=tickets_total,
-            ganancia_bruta_hoy=round(ganancia_total, 2),
+            tickets_efectivo=tickets_ef,
+            tickets_transferencia=tickets_tr,
+            tickets_mixto=tickets_mix,
+            tickets_anulados=tickets_anulados,
+            ventas_efectivo_total=ventas_ef,
+            ventas_transferencia_total=ventas_tr,
+            ganancia_bruta_hoy=ganancia_total,
             margen_promedio_hoy=margen_prom,
             valor_inventario_costo=round(val_costo, 2),
             valor_inventario_venta=round(val_venta, 2),
@@ -1081,7 +1405,8 @@ def obtener_dashboard_kpis() -> DashboardKPIsOut:
             productos_agotados=agotados,
             costos_incrementados_recientes=costos_incr,
             caja_activa=caja_act,
-            ventas_por_hora=ventas_hora
+            ventas_por_hora=ventas_hora,
+            top_productos=top_productos,
         )
 
 # --- Backup Generator ---
@@ -1333,6 +1658,7 @@ def get_pedido_by_id(id_pedido: int) -> Optional[PedidoOut]:
 
 def crear_pedido(data: PedidoCreateRequest) -> PedidoOut:
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         cursor = conn.cursor()
 
         if not data.items:
@@ -1350,11 +1676,14 @@ def crear_pedido(data: PedidoCreateRequest) -> PedidoOut:
         if not prov_nombre:
             prov_nombre = "General"
 
-        # Generate unique order number
+        # Generate collision-safe unique order number based on local date + MAX suffix
         today_str = datetime.now().strftime("%Y%m%d")
-        cursor.execute("SELECT COUNT(*) as c FROM PEDIDOS WHERE DATE(FechaCreacion) = CURRENT_DATE")
-        cnt = cursor.fetchone()["c"] + 1
-        num_pedido = f"PED-{today_str}-{cnt:03d}"
+        prefix = f"PED-{today_str}-"
+        max_seq = cursor.execute(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(NumeroPedido, ?) AS INTEGER)), 0) FROM PEDIDOS WHERE NumeroPedido LIKE ?",
+            (len(prefix) + 1, f"{prefix}%"),
+        ).fetchone()[0]
+        num_pedido = f"{prefix}{(int(max_seq or 0) + 1):03d}"
 
         # Calculate totals
         total_estimado = 0.0

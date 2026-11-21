@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Banknote,
   TrendingUp,
@@ -22,28 +22,97 @@ import {
   Search,
   Eye,
   User,
-  ShoppingBag
+  ShoppingBag,
+  Ban,
+  Calendar,
+  Award,
+  History
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
+import { api, BackendCashSession, BackendDashboard } from '../../services/api';
+import { Sale } from '../../types';
+
+function formatLocalDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 export const DashboardScreen: React.FC = () => {
   const {
     products,
     sales,
     cashShift,
+    currentUser,
     setCountedCash,
     updateInitialCash,
     closeShiftAndGenerateReport,
     setIsCashMovementModalOpen,
     setLastCompletedSale,
     setIsReceiptModalOpen,
+    voidSale,
     showToast
   } = useStore();
+
+  const isAdmin = (currentUser?.role_name || '').toUpperCase() === 'ADMINISTRADOR';
 
   const [inputCountedCash, setInputCountedCash] = useState<string>(
     cashShift.countedCash.toFixed(2)
   );
   const [salesSearchTerm, setSalesSearchTerm] = useState('');
+
+  // Date range filter for real backend Dashboard KPIs
+  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | '7d' | 'month' | 'custom'>('today');
+  const [rangeStart, setRangeStart] = useState<string>(() => formatLocalDate(new Date()));
+  const [rangeEnd, setRangeEnd] = useState<string>(() => formatLocalDate(new Date()));
+  const [dashboardData, setDashboardData] = useState<BackendDashboard | null>(null);
+  const [shiftHistory, setShiftHistory] = useState<BackendCashSession[]>([]);
+
+  // Void sale modal state
+  const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [isVoiding, setIsVoiding] = useState(false);
+
+  const applyDatePreset = (preset: 'today' | 'yesterday' | '7d' | 'month') => {
+    const now = new Date();
+    const today = formatLocalDate(now);
+    setDatePreset(preset);
+    if (preset === 'today') {
+      setRangeStart(today);
+      setRangeEnd(today);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      const yStr = formatLocalDate(y);
+      setRangeStart(yStr);
+      setRangeEnd(yStr);
+    } else if (preset === '7d') {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 6);
+      setRangeStart(formatLocalDate(start));
+      setRangeEnd(today);
+    } else {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      setRangeStart(formatLocalDate(firstDay));
+      setRangeEnd(today);
+    }
+  };
+
+  const loadAnalytics = useCallback(async () => {
+    try {
+      const [dash, hist] = await Promise.all([
+        api.getDashboard(rangeStart, rangeEnd),
+        api.getHistorialCaja(30)
+      ]);
+      setDashboardData(dash);
+      setShiftHistory(Array.isArray(hist) ? hist : []);
+    } catch {
+      // keep local fallback
+    }
+  }, [rangeStart, rangeEnd]);
+
+  useEffect(() => {
+    loadAnalytics();
+  }, [loadAnalytics, sales.length, cashShift.sessionId, cashShift.isOpen]);
 
   // Edit Initial Cash Modal State
   const [isEditInitialCashModalOpen, setIsEditInitialCashModalOpen] = useState(false);
@@ -51,39 +120,56 @@ export const DashboardScreen: React.FC = () => {
     cashShift.initialCash.toFixed(2)
   );
 
-  // Live Calculations (only today's sales; `sales` also holds history from previous days)
-  const todaySales = useMemo(() => {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    return sales.filter(s => s.date === todayStr);
-  }, [sales]);
+  // Fallback local calculations (only confirmed sales in selected range)
+  const rangeSalesLocal = useMemo(() => {
+    return sales.filter(s => s.status !== 'ANULADA' && s.date >= rangeStart && s.date <= rangeEnd);
+  }, [sales, rangeStart, rangeEnd]);
 
-  const todaySalesTotal = useMemo(() => {
-    return Number(todaySales.reduce((sum, s) => sum + s.subtotal, 0).toFixed(2));
-  }, [todaySales]);
+  const localSalesTotal = useMemo(() => {
+    return Number(rangeSalesLocal.reduce((sum, s) => sum + (s.total ?? s.subtotal), 0).toFixed(2));
+  }, [rangeSalesLocal]);
 
-  const grossProfit = useMemo(() => {
+  const localGrossProfit = useMemo(() => {
     let profit = 0;
-    todaySales.forEach(s => {
+    rangeSalesLocal.forEach(s => {
       s.items.forEach(it => {
-        profit += (it.unitPrice - (it.costPrice || it.unitPrice * 0.7)) * it.quantity;
+        profit += (it.unitPrice - (it.costPrice || 0)) * it.quantity;
       });
+      profit -= s.discount || 0;
     });
     return Number(profit.toFixed(2));
-  }, [todaySales]);
+  }, [rangeSalesLocal]);
+
+  const periodSalesTotal = dashboardData ? dashboardData.ventas_hoy_total : localSalesTotal;
+  const periodTicketsCount = dashboardData ? dashboardData.tickets_hoy_total : rangeSalesLocal.length;
+  const periodVoidedCount = dashboardData ? dashboardData.tickets_anulados : sales.filter(s => s.status === 'ANULADA' && s.date >= rangeStart && s.date <= rangeEnd).length;
+  const grossProfit = dashboardData ? dashboardData.ganancia_bruta_hoy : localGrossProfit;
+  const marginPercent = dashboardData
+    ? dashboardData.margen_promedio_hoy
+    : periodSalesTotal > 0
+      ? Number(((grossProfit / periodSalesTotal) * 100).toFixed(1))
+      : 0;
+  const recentCostIncreases = dashboardData ? dashboardData.costos_incrementados_recientes : 0;
 
   const inventoryCostValue = useMemo(() => {
+    if (dashboardData) return dashboardData.valor_inventario_costo;
     return Number(products.reduce((sum, p) => sum + p.costPrice * p.stock, 0).toFixed(2));
-  }, [products]);
+  }, [dashboardData, products]);
 
   const inventorySaleValue = useMemo(() => {
+    if (dashboardData) return dashboardData.valor_inventario_venta;
     return Number(products.reduce((sum, p) => sum + p.salePrice * p.stock, 0).toFixed(2));
-  }, [products]);
+  }, [dashboardData, products]);
 
   const outOfStockCount = useMemo(() => {
+    if (dashboardData) return dashboardData.productos_agotados;
     return products.filter(p => p.stock === 0).length;
-  }, [products]);
+  }, [dashboardData, products]);
+
+  const lowStockCount = useMemo(() => {
+    if (dashboardData) return dashboardData.productos_stock_bajo;
+    return products.filter(p => p.stock > 0 && p.stock <= p.minStock).length;
+  }, [dashboardData, products]);
 
   const filteredSales = useMemo(() => {
     if (!salesSearchTerm.trim()) return sales;
@@ -125,15 +211,51 @@ export const DashboardScreen: React.FC = () => {
     }
   };
 
-  // Hourly sales chart simulation data
-  const hourlyData = [
-    { hour: '08:00', amount: 45, height: '22%' },
-    { hour: '10:00', amount: 110, height: '48%' },
-    { hour: '12:00', amount: 80, height: '35%' },
-    { hour: '14:00', amount: 210, height: '85%' },
-    { hour: '16:00', amount: 130, height: '58%' },
-    { hour: '18:00', amount: 25, height: '16%' }
-  ];
+  const handleConfirmVoidSale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saleToVoid || voidReason.trim().length < 3 || isVoiding) return;
+    setIsVoiding(true);
+    try {
+      await voidSale(saleToVoid.id, voidReason.trim());
+      setSaleToVoid(null);
+      setVoidReason('');
+      await loadAnalytics();
+    } catch {
+      // Toast already shown by store
+    } finally {
+      setIsVoiding(false);
+    }
+  };
+
+  // Real hourly sales data from backend
+  const hourlyData = useMemo(() => {
+    const raw = dashboardData?.ventas_por_hora || [];
+    if (raw.length === 0) return [];
+    const maxMonto = Math.max(...raw.map(r => r.monto), 1);
+    return raw.map(r => ({
+      hour: r.hora,
+      amount: r.monto,
+      tickets: r.tickets,
+      height: `${Math.max(12, Math.round((r.monto / maxMonto) * 100))}%`
+    }));
+  }, [dashboardData]);
+
+  const peakHour = useMemo(() => {
+    if (hourlyData.length === 0) return null;
+    return hourlyData.reduce((best, cur) => (cur.amount > best.amount ? cur : best), hourlyData[0]);
+  }, [hourlyData]);
+
+  const topProducts = dashboardData?.top_productos || [];
+  const periodLabel =
+    datePreset === 'today'
+      ? 'Ventas de Hoy'
+      : datePreset === 'yesterday'
+        ? 'Ventas de Ayer'
+        : datePreset === '7d'
+          ? 'Ventas (Últimos 7 días)'
+          : datePreset === 'month'
+            ? 'Ventas de Este Mes'
+            : `Ventas (${rangeStart} a ${rangeEnd})`;
 
   return (
     <div className="workspace-screen flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[var(--ui-surface-muted)] select-none">
@@ -166,19 +288,67 @@ export const DashboardScreen: React.FC = () => {
           </div>
         </div>
 
+        {/* Date Range Filter Bar */}
+        <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Calendar className="w-4 h-4 text-[var(--ui-brand-strong)] mr-1" />
+            {([
+              { id: 'today', label: 'Hoy' },
+              { id: 'yesterday', label: 'Ayer' },
+              { id: '7d', label: 'Últimos 7 días' },
+              { id: 'month', label: 'Este mes' }
+            ] as const).map(opt => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => applyDatePreset(opt.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  datePreset === opt.id
+                    ? 'bg-[var(--ui-brand)] text-white'
+                    : 'bg-[var(--ui-surface-muted)] text-[var(--ui-secondary)] hover:bg-[var(--ui-surface-hover)] border border-[var(--ui-border)]'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <input
+              type="date"
+              value={rangeStart}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setRangeStart(e.target.value);
+              }}
+              className="px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs font-mono text-[var(--ui-text)]"
+            />
+            <span className="text-[var(--ui-muted)]">a</span>
+            <input
+              type="date"
+              value={rangeEnd}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setRangeEnd(e.target.value);
+              }}
+              className="px-2 py-1 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs font-mono text-[var(--ui-text)]"
+            />
+          </div>
+        </div>
+
         {/* KPI Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* KPI 1: Ventas de Hoy */}
+          {/* KPI 1: Ventas del Período */}
           <div className="metric-card surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-4 flex flex-col justify-between shadow-xs">
             <div className="text-[var(--ui-muted)] text-xs font-medium mb-1.5 flex items-center gap-1.5">
               <Banknote className="w-4 h-4 text-[var(--ui-brand-strong)]" />
-              <span>Ventas de Hoy</span>
+              <span>{periodLabel}</span>
             </div>
             <div className="metric-value font-mono text-2xl font-bold text-[var(--ui-text)]">
-              $ {todaySalesTotal.toFixed(2)}
+              $ {periodSalesTotal.toFixed(2)}
             </div>
             <div className="text-[11px] text-[var(--ui-muted)] mt-1.5">
-              {sales.length} tickets emitidos
+              {periodTicketsCount} {periodTicketsCount === 1 ? 'ticket confirmado' : 'tickets confirmados'}
+              {periodVoidedCount > 0 ? ` · ${periodVoidedCount} anul.` : ''}
             </div>
           </div>
 
@@ -192,7 +362,7 @@ export const DashboardScreen: React.FC = () => {
               $ {grossProfit.toFixed(2)}
             </div>
             <div className="text-[11px] text-[var(--ui-brand-strong)] mt-1.5 font-bold">
-              +30% margen promedio
+              {marginPercent.toFixed(1)}% margen promedio real
             </div>
           </div>
 
@@ -211,15 +381,22 @@ export const DashboardScreen: React.FC = () => {
                 $ {inventorySaleValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
             </div>
-            <div className="flex gap-2 mt-2">
+            <div className="flex flex-wrap gap-2 mt-2">
               {outOfStockCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-danger-text)] bg-[var(--ui-danger-bg)] px-2 py-0.5 rounded border border-[var(--ui-danger-border)]">
                   {outOfStockCount} Agotados
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-warning-text)] bg-[var(--ui-warning-bg)] px-2 py-0.5 rounded border border-[var(--ui-warning-border)]">
-                1 Costo incrementado
-              </span>
+              {lowStockCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-warning-text)] bg-[var(--ui-warning-bg)] px-2 py-0.5 rounded border border-[var(--ui-warning-border)]">
+                  {lowStockCount} Stock bajo
+                </span>
+              )}
+              {recentCostIncreases > 0 && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--ui-warning-text)] bg-[var(--ui-warning-bg)] px-2 py-0.5 rounded border border-[var(--ui-warning-border)]">
+                  {recentCostIncreases} {recentCostIncreases === 1 ? 'Costo incrementado' : 'Costos incrementados'}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -340,31 +517,38 @@ export const DashboardScreen: React.FC = () => {
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <h3 className="font-bold text-base text-[var(--ui-text)]">
-                    Ventas por Hora (Turno Actual)
+                    Ventas por Hora ({rangeStart === rangeEnd ? rangeStart : `${rangeStart} a ${rangeEnd}`})
                   </h3>
-                  <p className="text-xs text-[var(--ui-muted)]">Comportamiento de la afluencia en caja</p>
+                  <p className="text-xs text-[var(--ui-muted)]">Comportamiento real de ventas confirmadas</p>
                 </div>
                 <div className="flex items-center gap-1 text-xs font-semibold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-2.5 py-1 rounded-lg">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Pico: 14:00 - 16:00</span>
+                  <span>{peakHour ? `Pico: ${peakHour.hour} ($${peakHour.amount.toFixed(2)})` : 'Sin ventas en el rango'}</span>
                 </div>
               </div>
 
               {/* Chart Bars */}
-              <div className="h-44 flex items-end justify-between gap-3 pt-6 pb-2 px-2 border-b border-[var(--ui-border)]">
-                {hourlyData.map((d) => (
-                  <div key={d.hour} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity font-mono text-[10px] font-bold text-[var(--ui-brand-strong)] bg-[var(--ui-brand)]/10 px-1 rounded">
-                      ${d.amount}
+              {hourlyData.length === 0 ? (
+                <div className="h-44 flex items-center justify-center text-xs text-[var(--ui-muted)] border-b border-[var(--ui-border)]">
+                  No se registraron ventas confirmadas en el rango seleccionado.
+                </div>
+              ) : (
+                <div className="h-44 flex items-end justify-between gap-2 pt-6 pb-2 px-2 border-b border-[var(--ui-border)] overflow-x-auto">
+                  {hourlyData.map((d) => (
+                    <div key={d.hour} className="flex-1 min-w-[36px] flex flex-col items-center gap-1.5 h-full justify-end group">
+                      <div className="font-mono text-[10px] font-bold text-[var(--ui-brand-strong)]">
+                        ${d.amount.toFixed(0)}
+                      </div>
+                      <div
+                        style={{ height: d.height }}
+                        title={`${d.hour}: $${d.amount.toFixed(2)} (${d.tickets} tkts)`}
+                        className="w-full max-w-[42px] bg-[var(--ui-brand)] rounded-t-lg transition-all shadow-xs"
+                      />
+                      <span className="font-mono text-[10px] text-[var(--ui-muted)]">{d.hour}</span>
                     </div>
-                    <div
-                      style={{ height: d.height }}
-                      className="w-full max-w-[42px] bg-[var(--ui-brand)] group-hover:bg-[var(--ui-brand)] rounded-t-lg transition-all shadow-xs"
-                    />
-                    <span className="font-mono text-[11px] text-[var(--ui-muted)]">{d.hour}</span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Quick Session Details & Cash Breakdown */}
@@ -496,34 +680,62 @@ export const DashboardScreen: React.FC = () => {
 
                       {/* Payment Method */}
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase ${
-                          sale.paymentMethod === 'cash'
-                            ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]'
-                            : 'bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)]'
-                        }`}>
-                          {sale.paymentMethod === 'cash' ? 'Efectivo' : 'Transferencia'}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase ${
+                            sale.paymentMethod === 'cash'
+                              ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]'
+                              : sale.paymentMethod === 'mixed'
+                                ? 'bg-[var(--ui-purple-bg)] text-[var(--ui-purple-text)] border border-[var(--ui-purple-border)]'
+                                : 'bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)]'
+                          }`}>
+                            {sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'mixed' ? 'Mixto' : 'Transferencia'}
+                          </span>
+                          {sale.status === 'ANULADA' && (
+                            <span
+                              title={sale.voidReason || 'Venta anulada'}
+                              className="inline-flex items-center px-2 py-0.5 rounded-full font-mono text-[10px] font-bold uppercase bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border border-[var(--ui-danger-border)]"
+                            >
+                              Anulada
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Total */}
-                      <td className="px-4 py-3 text-right font-mono font-bold text-sm text-[var(--ui-text)]">
-                        ${sale.subtotal.toFixed(2)}
+                      <td className={`px-4 py-3 text-right font-mono font-bold text-sm ${sale.status === 'ANULADA' ? 'line-through text-[var(--ui-muted)]' : 'text-[var(--ui-text)]'}`}>
+                        ${(sale.total ?? sale.subtotal).toFixed(2)}
                       </td>
 
                       {/* Action */}
                       <td className="px-4 py-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLastCompletedSale(sale);
-                            setIsReceiptModalOpen(true);
-                          }}
-                          className="px-2.5 py-1 text-xs font-semibold bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] rounded-lg border border-[var(--ui-border)] transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs"
-                          title="Ver y reimprimir comprobante"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
-                          <span>Ver</span>
-                        </button>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLastCompletedSale(sale);
+                              setIsReceiptModalOpen(true);
+                            }}
+                            className="px-2.5 py-1 text-xs font-semibold bg-[var(--ui-surface-hover)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] rounded-lg border border-[var(--ui-border)] transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                            title="Ver y reimprimir comprobante"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
+                            <span>Ver</span>
+                          </button>
+                          {isAdmin && sale.status !== 'ANULADA' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSaleToVoid(sale);
+                                setVoidReason('');
+                              }}
+                              className="px-2 py-1 text-xs font-semibold bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] rounded-lg border border-[var(--ui-danger-border)] transition-all cursor-pointer inline-flex items-center gap-1"
+                              title="Anular venta y restaurar stock"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>Anular</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -532,7 +744,189 @@ export const DashboardScreen: React.FC = () => {
             </table>
           </div>
         </div>
+
+        {/* Top Productos Más Vendidos + Historial de Cortes Z */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Top Productos */}
+          <div className="lg:col-span-5 surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-[var(--ui-border)] flex items-center justify-between">
+              <h3 className="font-bold text-sm md:text-base text-[var(--ui-text)] flex items-center gap-2">
+                <Award className="w-4 h-4 text-[var(--ui-brand-strong)]" />
+                <span>Top Productos Vendidos</span>
+              </h3>
+              <span className="text-[11px] font-mono text-[var(--ui-muted)]">Top {topProducts.length}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] font-mono text-[10px] uppercase text-[var(--ui-muted)]">
+                    <th className="px-3 py-2.5">Producto</th>
+                    <th className="px-3 py-2.5 text-right">Unid.</th>
+                    <th className="px-3 py-2.5 text-right">Ventas</th>
+                    <th className="px-3 py-2.5 text-right">Ganancia</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--ui-border)]">
+                  {topProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-[var(--ui-muted)]">
+                        Sin ventas en el período seleccionado.
+                      </td>
+                    </tr>
+                  ) : (
+                    topProducts.map(tp => (
+                      <tr key={tp.id_producto} className="hover:bg-[var(--ui-surface-muted)]">
+                        <td className="px-3 py-2">
+                          <div className="font-semibold text-[var(--ui-text)] truncate max-w-[180px]">{tp.nombre}</div>
+                          <div className="font-mono text-[10px] text-[var(--ui-muted)]">{tp.codigo}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{Number(tp.unidades.toFixed(2))}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-[var(--ui-text)]">${tp.ingresos.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-[var(--ui-brand-strong)]">${tp.ganancia.toFixed(2)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Historial de Cortes Z (Turnos Cerrados) */}
+          <div className="lg:col-span-7 surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-[var(--ui-border)] flex items-center justify-between">
+              <h3 className="font-bold text-sm md:text-base text-[var(--ui-text)] flex items-center gap-2">
+                <History className="w-4 h-4 text-[var(--ui-brand-strong)]" />
+                <span>Historial de Cortes Z (Turnos de Caja)</span>
+              </h3>
+              <span className="text-[11px] font-mono text-[var(--ui-muted)]">{shiftHistory.length} turnos</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] font-mono text-[10px] uppercase text-[var(--ui-muted)]">
+                    <th className="px-3 py-2.5">Turno / Cajero</th>
+                    <th className="px-3 py-2.5">Apertura / Cierre</th>
+                    <th className="px-3 py-2.5 text-right">Efectivo</th>
+                    <th className="px-3 py-2.5 text-right">Transf.</th>
+                    <th className="px-3 py-2.5 text-right">Esperado</th>
+                    <th className="px-3 py-2.5 text-right">Diferencia</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--ui-border)]">
+                  {shiftHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-[var(--ui-muted)]">
+                        No hay turnos registrados aún.
+                      </td>
+                    </tr>
+                  ) : (
+                    shiftHistory.map(sh => {
+                      const diff = sh.diferencia ?? 0;
+                      return (
+                        <tr key={sh.id_sesion_caja} className="hover:bg-[var(--ui-surface-muted)]">
+                          <td className="px-3 py-2">
+                            <div className="font-bold text-[var(--ui-text)] flex items-center gap-1.5">
+                              <span>#{sh.id_sesion_caja}</span>
+                              <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded uppercase ${
+                                sh.estado === 'ABIERTA'
+                                  ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)]'
+                                  : 'bg-[var(--ui-surface-hover)] text-[var(--ui-muted)]'
+                              }`}>
+                                {sh.estado}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-[var(--ui-muted)] truncate max-w-[130px]">{sh.cajero_nombre}</div>
+                          </td>
+                          <td className="px-3 py-2 font-mono text-[10px] text-[var(--ui-muted)] whitespace-nowrap">
+                            <div>Ap: {sh.fecha_apertura}</div>
+                            <div>Ci: {sh.fecha_cierre || 'En curso'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-[var(--ui-brand-strong)]">${sh.total_ventas_efectivo.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-[var(--ui-info-text)]">${sh.total_ventas_transferencia.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-[var(--ui-text)]">${sh.total_esperado.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold">
+                            {sh.estado === 'ABIERTA' ? (
+                              <span className="text-[var(--ui-muted)]">—</span>
+                            ) : Math.abs(diff) < 0.01 ? (
+                              <span className="text-[var(--ui-brand-strong)]">$0.00</span>
+                            ) : diff < 0 ? (
+                              <span className="text-[var(--ui-danger-text)]">-${Math.abs(diff).toFixed(2)}</span>
+                            ) : (
+                              <span className="text-[var(--ui-info-text)]">+${diff.toFixed(2)}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Modal: Anular Venta */}
+      {saleToVoid && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-md w-full p-5 space-y-4">
+            <div className="flex justify-between items-center border-b border-[var(--ui-border)] pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] flex items-center justify-center font-bold">
+                  <Ban className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-sm text-[var(--ui-text)]">
+                  Anular Ticket #{saleToVoid.ticketNumber}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSaleToVoid(null)}
+                className="text-[var(--ui-muted)] hover:text-[var(--ui-text)] p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[var(--ui-muted)]">
+              Esta acción marcará la venta de <strong>${(saleToVoid.total ?? saleToVoid.subtotal).toFixed(2)}</strong> como <strong>ANULADA</strong>, devolverá los productos al stock (Kardex) y ajustará la caja si el turno sigue abierto.
+            </p>
+
+            <form onSubmit={handleConfirmVoidSale} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-[var(--ui-text)] mb-1">
+                  Motivo de anulación *
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder="Ej: Error de cobro / cliente devolvió producto"
+                  className="w-full px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-danger-border)] rounded-lg text-xs text-[var(--ui-text)] outline-none"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSaleToVoid(null)}
+                  className="px-3.5 py-2 text-xs font-semibold text-[var(--ui-secondary)] rounded-lg border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVoiding || voidReason.trim().length < 3}
+                  className="px-4 py-2 text-xs font-bold text-white bg-[var(--ui-danger-solid)] hover:opacity-90 disabled:opacity-50 rounded-lg cursor-pointer"
+                >
+                  {isVoiding ? 'Anulando...' : 'Confirmar Anulación'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Modificar Fondo Inicial de Caja */}
       {isEditInitialCashModalOpen && (

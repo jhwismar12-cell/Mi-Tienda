@@ -71,7 +71,23 @@ export interface CartItem {
   promoLabel?: string;
 }
 
-export type PaymentMethod = 'cash' | 'transfer';
+export type PaymentMethod = 'cash' | 'transfer' | 'mixed';
+
+export interface ParkedCart {
+  id: string;
+  label: string;
+  createdAt: string;
+  items: CartItem[];
+  discount: number;
+}
+
+export interface StoreConfig {
+  storeName: string;
+  ruc: string;
+  address: string;
+  phone: string;
+  receiptFooter: string;
+}
 
 export interface SaleItem {
   productId: string;
@@ -85,16 +101,23 @@ export interface SaleItem {
 
 export interface Sale {
   id: string;
+  sessionId?: number;
   ticketNumber: string;
   date: string; // ISO or formatted
   time: string;
   items: SaleItem[];
   subtotal: number;
+  discount?: number;
+  total?: number;
   totalArticles: number;
   totalUnits: number;
   paymentMethod: PaymentMethod;
   cashReceived?: number;
   change?: number;
+  cashAmount?: number;
+  transferAmount?: number;
+  status?: 'CONFIRMADA' | 'ANULADA';
+  voidReason?: string;
   cashierName: string;
 }
 

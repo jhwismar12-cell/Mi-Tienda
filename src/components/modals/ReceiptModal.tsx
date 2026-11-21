@@ -3,7 +3,7 @@ import { Printer, CheckCircle, X, Download, Share2 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 
 export const ReceiptModal: React.FC = () => {
-  const { isReceiptModalOpen, setIsReceiptModalOpen, lastCompletedSale } = useStore();
+  const { isReceiptModalOpen, setIsReceiptModalOpen, lastCompletedSale, storeConfig } = useStore();
   const printRef = useRef<HTMLDivElement>(null);
 
   if (!isReceiptModalOpen || !lastCompletedSale) return null;
@@ -38,11 +38,11 @@ export const ReceiptModal: React.FC = () => {
             {/* Store Header */}
             <div className="text-center space-y-1 border-b border-dashed border-[var(--ui-border)] pb-3">
               <h2 className="font-bold text-sm text-[var(--ui-brand-strong)] uppercase tracking-wider font-sans">
-                MI TIENDA FAMILIAR
+                {storeConfig.storeName}
               </h2>
-              <p className="text-[10px] text-[var(--ui-muted)]">RUC: 1792348590001</p>
-              <p className="text-[10px] text-[var(--ui-muted)]">Av. Amazonas y Naciones Unidas</p>
-              <p className="text-[10px] text-[var(--ui-muted)]">Tel: (02) 245-8900</p>
+              {storeConfig.ruc && <p className="text-[10px] text-[var(--ui-muted)]">RUC: {storeConfig.ruc}</p>}
+              {storeConfig.address && <p className="text-[10px] text-[var(--ui-muted)]">{storeConfig.address}</p>}
+              {storeConfig.phone && <p className="text-[10px] text-[var(--ui-muted)]">Tel: {storeConfig.phone}</p>}
               <div className="pt-1 text-[11px] font-bold text-[var(--ui-text)]">
                 COMPROBANTE DE VENTA
               </div>
@@ -84,15 +84,39 @@ export const ReceiptModal: React.FC = () => {
                 <span>Total Artículos:</span>
                 <span>{lastCompletedSale.totalArticles} ({Number(lastCompletedSale.totalUnits.toFixed(3))} un)</span>
               </div>
+              {(lastCompletedSale.discount || 0) > 0 && (
+                <div className="flex justify-between text-[11px] text-[var(--ui-danger-text)]">
+                  <span>Descuento aplicado:</span>
+                  <span>- $ {(lastCompletedSale.discount || 0).toFixed(2)}</span>
+                </div>
+              )}
               <div className="flex justify-between font-bold text-sm pt-1 text-[var(--ui-brand-strong)]">
                 <span>TOTAL PAGADO:</span>
-                <span>$ {lastCompletedSale.subtotal.toFixed(2)}</span>
+                <span>$ {(lastCompletedSale.total ?? lastCompletedSale.subtotal).toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-[11px] text-[var(--ui-muted)] pt-1">
                 <span>Método de Pago:</span>
-                <span className="uppercase font-semibold">{lastCompletedSale.paymentMethod === 'cash' ? 'Efectivo' : 'Transferencia'}</span>
+                <span className="uppercase font-semibold">
+                  {lastCompletedSale.paymentMethod === 'cash'
+                    ? 'Efectivo'
+                    : lastCompletedSale.paymentMethod === 'mixed'
+                      ? 'Mixto (Ef. + Transf.)'
+                      : 'Transferencia'}
+                </span>
               </div>
-              {lastCompletedSale.cashReceived !== undefined && (
+              {lastCompletedSale.paymentMethod === 'mixed' && (
+                <>
+                  <div className="flex justify-between text-[11px] text-[var(--ui-muted)]">
+                    <span>Parte Efectivo:</span>
+                    <span>$ {(lastCompletedSale.cashAmount || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-[var(--ui-muted)]">
+                    <span>Parte Transferencia:</span>
+                    <span>$ {(lastCompletedSale.transferAmount || 0).toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+              {lastCompletedSale.paymentMethod !== 'transfer' && lastCompletedSale.cashReceived !== undefined && (
                 <>
                   <div className="flex justify-between text-[11px] text-[var(--ui-muted)]">
                     <span>Efectivo Recibido:</span>
@@ -112,7 +136,7 @@ export const ReceiptModal: React.FC = () => {
                 * {lastCompletedSale.ticketNumber} *
               </div>
               <p className="text-[10px] text-[var(--ui-muted)] italic">
-                ¡Gracias por su compra en Mi Tienda Familiar!
+                {storeConfig.receiptFooter}
               </p>
             </div>
           </div>

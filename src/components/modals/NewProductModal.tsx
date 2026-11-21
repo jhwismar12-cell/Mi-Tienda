@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, X, Package, CheckCircle2, Camera } from 'lucide-react';
+import { Plus, X, Package, CheckCircle2, Camera, AlertTriangle } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Category } from '../../types';
 import { useStoreCategories } from '../../utils/categories';
@@ -34,6 +34,7 @@ export const NewProductModal: React.FC = () => {
   const [stock, setStock] = useState('20');
   const [minStock, setMinStock] = useState('5');
   const [isSaving, setIsSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const savingProduct = useRef(false);
   const wasOpenRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -53,6 +54,7 @@ export const NewProductModal: React.FC = () => {
       setSalePrice('1.50');
       setStock('20');
       setMinStock('5');
+      setSubmitError(null);
       if (newProductPrefillBarcode) {
         focusTimer = setTimeout(() => {
           nameInputRef.current?.focus();
@@ -75,18 +77,30 @@ export const NewProductModal: React.FC = () => {
 
   if (!isNewProductModalOpen) return null;
 
+  const normalizedBarcode = barcode.trim();
+  const duplicateBarcodeProduct = normalizedBarcode
+    ? products.find((p) => (p.barcode || '').trim() === normalizedBarcode)
+    : undefined;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || savingProduct.current) return;
+    if (duplicateBarcodeProduct) {
+      setSubmitError(
+        `El código de barras "${normalizedBarcode}" ya pertenece a "${duplicateBarcodeProduct.name}" (${duplicateBarcodeProduct.code}).`
+      );
+      return;
+    }
 
     const finalCode = code.trim() || `AUT-${Math.floor(100000 + Math.random() * 900000)}`;
 
     savingProduct.current = true;
     setIsSaving(true);
+    setSubmitError(null);
     try {
       await addProduct({
         code: finalCode,
-        barcode: barcode.trim() || undefined,
+        barcode: normalizedBarcode || undefined,
         name: name.trim(),
         category,
         providerId,
@@ -102,9 +116,10 @@ export const NewProductModal: React.FC = () => {
       });
       setProviderId(undefined);
       setDistributor(undefined);
+      setSubmitError(null);
       setIsNewProductModalOpen(false);
-    } catch {
-      // The store shows the error; preserve the form for correction and retry.
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'No se pudo guardar el producto.');
     } finally {
       savingProduct.current = false;
       setIsSaving(false);
@@ -158,7 +173,7 @@ export const NewProductModal: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
                 Código Interno / SKU
@@ -166,7 +181,10 @@ export const NewProductModal: React.FC = () => {
               <input
                 type="text"
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
+                onChange={(e) => {
+                  setCode(e.target.value);
+                  if (submitError) setSubmitError(null);
+                }}
                 placeholder="Automático"
                 className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono"
               />
@@ -180,9 +198,16 @@ export const NewProductModal: React.FC = () => {
                   type="text"
                   aria-label="Código de barras"
                   value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
+                  onChange={(e) => {
+                    setBarcode(e.target.value);
+                    if (submitError) setSubmitError(null);
+                  }}
                   placeholder="Opcional"
-                  className="flex-1 min-w-0 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono"
+                  className={`flex-1 min-w-0 bg-[var(--ui-surface-muted)] border rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none font-mono ${
+                    duplicateBarcodeProduct
+                      ? 'border-[var(--ui-danger-border)] ring-1 ring-[var(--ui-danger-border)]'
+                      : 'border-[var(--ui-border)]'
+                  }`}
                 />
                 <button
                   type="button"
@@ -197,6 +222,39 @@ export const NewProductModal: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {duplicateBarcodeProduct && (
+            <div
+              role="alert"
+              className="bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] rounded-xl p-3 flex items-start gap-2.5 text-xs text-[var(--ui-danger-text)]"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="space-y-1 min-w-0">
+                <p className="font-bold">
+                  Este código de barras ya existe en el inventario
+                </p>
+                <p>
+                  Ya pertenece a <strong className="break-words">{duplicateBarcodeProduct.name}</strong>{' '}
+                  (<span className="font-mono">{duplicateBarcodeProduct.code}</span>
+                  {duplicateBarcodeProduct.distributor ? ` · ${duplicateBarcodeProduct.distributor}` : ''}
+                  {' · '}PVP ${duplicateBarcodeProduct.salePrice.toFixed(2)} · Stock {duplicateBarcodeProduct.stock} un).
+                </p>
+                <p className="opacity-90">
+                  Búscalo en el inventario para editarlo en lugar de duplicarlo, o cambia el código de barras.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {submitError && !duplicateBarcodeProduct && (
+            <div
+              role="alert"
+              className="bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] rounded-xl p-3 flex items-start gap-2.5 text-xs text-[var(--ui-danger-text)]"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <p className="font-semibold break-words">{submitError}</p>
+            </div>
+          )}
 
           <div>
             <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
@@ -343,7 +401,7 @@ export const NewProductModal: React.FC = () => {
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || Boolean(duplicateBarcodeProduct)}
               className="px-5 py-2 text-xs font-bold text-white bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-50 rounded-xl shadow-sm flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4 text-[var(--ui-mint)]" />

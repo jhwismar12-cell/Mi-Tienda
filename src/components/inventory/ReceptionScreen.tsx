@@ -78,7 +78,9 @@ export const ReceptionScreen: React.FC = () => {
   const [aiError, setAiError] = useState('');
   const [aiResult, setAiResult] = useState<AIProcessedInvoice | null>(null);
   const [customApiKey, setCustomApiKey] = useState('');
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
   const [hasServerApiKey, setHasServerApiKey] = useState(false);
+  const [isScannedInvoiceMode, setIsScannedInvoiceMode] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -148,6 +150,7 @@ export const ReceptionScreen: React.FC = () => {
 
   const clearLoadedOrder = () => {
     setSelectedOrderForReception(null);
+    setIsScannedInvoiceMode(false);
     setItems([]);
     setArrivalStates({});
     setShowOrderScannerTools(false);
@@ -203,17 +206,47 @@ export const ReceptionScreen: React.FC = () => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    const rawW = video.videoWidth || 1280;
+    const rawH = video.videoHeight || 720;
+    const maxDim = 1600;
+    const scale = Math.min(1, maxDim / Math.max(rawW, rawH));
+    canvas.width = Math.round(rawW * scale);
+    canvas.height = Math.round(rawH * scale);
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
       setImagePreview(dataUrl);
       setSelectedFile(null);
+      setAiError('');
+      setAiResult(null);
       stopCamera();
+      setAiScanTab('upload');
     }
   };
+
+  const compressImageDataUrl = (dataUrl: string): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1600;
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
 
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -230,8 +263,12 @@ export const ReceptionScreen: React.FC = () => {
 
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        setImagePreview(e.target?.result as string);
+      reader.onload = async (e) => {
+        const rawUrl = e.target?.result as string;
+        if (rawUrl) {
+          const compressed = await compressImageDataUrl(rawUrl);
+          setImagePreview(compressed);
+        }
       };
       reader.readAsDataURL(file);
     } else {
@@ -239,10 +276,36 @@ export const ReceptionScreen: React.FC = () => {
     }
   };
 
-  // Trigger AI analysis
+  const isSelectedXml = Boolean(
+    selectedFile &&
+      (selectedFile.name.toLowerCase().endsWith('.xml') ||
+        selectedFile.type.toLowerCase().includes('xml'))
+  );
+
+  const handleSaveServerApiKey = async () => {
+    if (!customApiKey.trim()) return;
+    setIsSavingApiKey(true);
+    setAiError('');
+    try {
+      await api.saveIAConfig(customApiKey.trim());
+      setHasServerApiKey(true);
+      showToast('API Key de Gemini guardada en el servidor');
+    } catch (err: any) {
+      setAiError(err.message || 'No se pudo guardar la API Key (se requiere rol Administrador).');
+    } finally {
+      setIsSavingApiKey(false);
+    }
+  };
+
+  // Trigger AI / XML analysis
   const handleProcessInvoice = async () => {
     if (!imagePreview && !selectedFile) {
-      setAiError('Por favor selecciona una imagen o toma una fotografía primero.');
+      setAiError('Por favor selecciona una foto, PDF o XML de factura primero.');
+      return;
+    }
+
+    if (selectedFile && !selectedFile.type.startsWith('image/') && selectedFile.size > 4.2 * 1024 * 1024) {
+      setAiError('El archivo supera 4.2 MB. Comprime el PDF o sube una foto o el XML del SRI.');
       return;
     }
 
@@ -251,10 +314,12 @@ export const ReceptionScreen: React.FC = () => {
 
     try {
       const formData = new FormData();
-      if (selectedFile) {
-        formData.append('file', selectedFile);
-      } else if (imagePreview) {
+      if (imagePreview) {
+        // Send compressed JPEG base64 (~250-450 KB) to avoid Vercel 4.5 MB limit on phone photos
         formData.append('image_base64', imagePreview);
+        formData.append('mime_type', 'image/jpeg');
+      } else if (selectedFile) {
+        formData.append('file', selectedFile);
       }
       if (customApiKey.trim()) {
         formData.append('api_key', customApiKey.trim());
@@ -262,28 +327,49 @@ export const ReceptionScreen: React.FC = () => {
 
       const result = await api.procesarFacturaIA(formData);
       setAiResult(result);
+      // Descartar la foto inmediatamente tras extraer los datos (no se conserva la imagen)
+      setImagePreview(null);
+      setSelectedFile(null);
       setIsProcessingAI(false);
     } catch (err: any) {
       setIsProcessingAI(false);
-      setAiError(err.message || 'Error procesando la factura con IA. Revisa tu conexión o API Key.');
+      setAiError(err.message || 'Error procesando la factura. Revisa tu conexión o API Key.');
     }
   };
 
-  // Apply AI Results into Form
+  const normalizeInvoiceDate = (raw?: string): string => {
+    if (!raw) return new Date().toISOString().split('T')[0];
+    const clean = raw.trim();
+    const dmy = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (dmy) {
+      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    const ymd = clean.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (ymd) {
+      return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+    }
+    return new Date().toISOString().split('T')[0];
+  };
+
+  // Apply AI Results into Reception Checklist Form
   const handleApplyAIResult = () => {
     if (!aiResult) return;
 
     // 1. Set Provider
     if (aiResult.proveedor_nombre) {
       setProvider(aiResult.proveedor_nombre);
-      const matched = providerList.find(p => p.id_proveedor === aiResult.id_proveedor || p.razon_social.toLowerCase() === aiResult.proveedor_nombre.toLowerCase());
+      const matched = providerList.find(
+        p =>
+          p.id_proveedor === aiResult.id_proveedor ||
+          p.razon_social.trim().toLowerCase() === aiResult.proveedor_nombre.trim().toLowerCase()
+      );
       setProviderId(matched?.id_proveedor);
       if (!matched) {
         setNewProvName(aiResult.proveedor_nombre);
         setNewProvRuc(aiResult.proveedor_ruc || '');
         setProviderModalTab('create');
         setIsNewProviderModalOpen(true);
-        showToast('Registra el proveedor detectado antes de guardar la compra.');
+        showToast('Registra el proveedor detectado antes de confirmar el ingreso a stock.');
       }
     }
 
@@ -292,10 +378,10 @@ export const ReceptionScreen: React.FC = () => {
       setInvoiceNumber(aiResult.numero_factura);
     }
     if (aiResult.fecha_emision) {
-      setInvoiceDate(aiResult.fecha_emision.includes('/') ? new Date().toISOString().split('T')[0] : aiResult.fecha_emision);
+      setInvoiceDate(normalizeInvoiceDate(aiResult.fecha_emision));
     }
 
-    // 3. Set Items
+    // 3. Set Items & activate Checklist mode (1 tap = Verde, 2 taps = Rojo)
     if (aiResult.items && aiResult.items.length > 0) {
       const draftItems: ReceptionDraftItem[] = aiResult.items.map((it, idx) => ({
         id: `rec-ai-${Date.now()}-${idx}`,
@@ -309,7 +395,10 @@ export const ReceptionScreen: React.FC = () => {
         isNewProduct: it.es_nuevo
       }));
 
+      setSelectedOrderForReception(null);
+      setIsScannedInvoiceMode(true);
       setItems(draftItems);
+      setArrivalStates({});
     }
 
     setIsAIScannerModalOpen(false);
@@ -317,7 +406,7 @@ export const ReceptionScreen: React.FC = () => {
     setImagePreview(null);
     setSelectedFile(null);
     stopCamera();
-    showToast('Productos y datos de la factura cargados con éxito.');
+    showToast('📄 Factura cargada al listado. 1 toque = ✓ Verde (llegó), 2 toques = ✕ Rojo (no llegó) o pulsa "Marcar todos ✓".');
   };
 
   const handleCreateProvider = async (e: React.FormEvent) => {
@@ -347,10 +436,12 @@ export const ReceptionScreen: React.FC = () => {
     setNewProvAddress('');
   };
 
-  // Calculations (when confirming a scheduled order pack, count only arrived/green items)
+  const isChecklistActive = Boolean(selectedOrderForReception) || isScannedInvoiceMode;
+
+  // Calculations (when confirming a scheduled order or scanned invoice, count only arrived/green items)
   const confirmedItems = useMemo(
-    () => (selectedOrderForReception ? items.filter(it => arrivalStates[it.id] === 'arrived') : items),
-    [selectedOrderForReception, items, arrivalStates]
+    () => (isChecklistActive ? items.filter(it => arrivalStates[it.id] === 'arrived') : items),
+    [isChecklistActive, items, arrivalStates]
   );
   const { missingCount } = useMemo(
     () => countOrderArrivalStates(items.map(it => it.id), arrivalStates),
@@ -485,7 +576,7 @@ export const ReceptionScreen: React.FC = () => {
       return;
     }
 
-    const itemsToReceive = selectedOrderForReception ? confirmedItems : items;
+    const itemsToReceive = isChecklistActive ? confirmedItems : items;
     if (itemsToReceive.length === 0) {
       showToast('⚠️ Marca con ✓ al menos un producto que haya llegado antes de confirmar.');
       return;
@@ -772,12 +863,12 @@ export const ReceptionScreen: React.FC = () => {
 
       {/* Main Items Data Table / Order Arrival Checklist */}
       <div className="table-shell shrink-0 lg:shrink lg:flex-1 lg:min-h-0 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl lg:overflow-hidden shadow-xs flex flex-col">
-        {selectedOrderForReception && items.length > 0 && (
+        {isChecklistActive && items.length > 0 && (
           <div className="px-4 py-2.5 bg-[var(--ui-surface-muted)] border-b border-[var(--ui-border)] flex flex-wrap items-center justify-between gap-2 shrink-0">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <CheckCircle2 className="w-4 h-4 text-[var(--ui-brand-strong)] shrink-0" />
               <span className="font-bold text-[var(--ui-text)]">
-                Lista de Verificación
+                {isScannedInvoiceMode && !selectedOrderForReception ? 'Verificación de Factura Escaneada' : 'Lista de Verificación'}
               </span>
               <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]">
                 ✓ {confirmedItems.length} verde
@@ -806,7 +897,7 @@ export const ReceptionScreen: React.FC = () => {
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 bg-[var(--ui-surface-hover)] z-10">
               <tr>
-                {selectedOrderForReception && (
+                {isChecklistActive && (
                   <th className="table-heading px-2 sm:px-3 py-2.5 font-sans text-xs font-semibold text-[var(--ui-brand-strong)] text-center w-[68px] whitespace-nowrap">
                     Llegó
                   </th>
@@ -837,7 +928,7 @@ export const ReceptionScreen: React.FC = () => {
             <tbody className="divide-y divide-[var(--ui-border)]">
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={selectedOrderForReception ? 8 : 7} className="py-16 text-center text-[var(--ui-subtle)]">
+                  <td colSpan={isChecklistActive ? 8 : 7} className="py-16 text-center text-[var(--ui-subtle)]">
                     <div className="max-w-sm mx-auto space-y-2">
                       <FileText className="w-10 h-10 mx-auto text-[var(--ui-subtle)]" />
                       <p className="font-semibold text-sm text-[var(--ui-secondary)]">
@@ -851,7 +942,7 @@ export const ReceptionScreen: React.FC = () => {
                 </tr>
               ) : (
                 items.map((item) => {
-                  const arrivalState: OrderArrivalState = selectedOrderForReception
+                  const arrivalState: OrderArrivalState = isChecklistActive
                     ? arrivalStates[item.id] || 'pending'
                     : 'arrived';
                   const isArrived = arrivalState === 'arrived';
@@ -863,16 +954,14 @@ export const ReceptionScreen: React.FC = () => {
                     <tr
                       key={item.id}
                       className={`text-xs transition-colors ${
-                        selectedOrderForReception && isArrived
+                        isChecklistActive && isArrived
                           ? 'bg-[var(--ui-brand-soft)] hover:bg-[var(--ui-brand)]/15'
-                          : selectedOrderForReception && isMissing
+                          : isChecklistActive && isMissing
                           ? 'bg-[var(--ui-danger-bg)]/80 hover:bg-[var(--ui-danger-bg)]'
-                          : selectedOrderForReception
-                          ? 'hover:bg-[var(--ui-surface-muted)]'
                           : 'hover:bg-[var(--ui-surface-muted)]'
                       }`}
                     >
-                      {selectedOrderForReception && (
+                      {isChecklistActive && (
                         <td className="px-2.5 py-2.5 text-center">
                           <button
                             type="button"
@@ -992,7 +1081,7 @@ export const ReceptionScreen: React.FC = () => {
             <div>
               <span className="text-[var(--ui-muted)] font-sans mr-2">Total Ítems:</span>
               <strong className="text-[var(--ui-text)] text-sm">
-                {selectedOrderForReception ? `${confirmedItems.length} / ${items.length}` : items.length}
+                {isChecklistActive ? `${confirmedItems.length} / ${items.length}` : items.length}
               </strong>
             </div>
             <div>
@@ -1058,21 +1147,21 @@ export const ReceptionScreen: React.FC = () => {
             {/* Modal Content */}
             <div className="p-6 overflow-y-auto space-y-4 flex-1">
               {/* Tab Selector: Upload or Camera */}
-              <div className="flex items-center gap-2 border-b border-[var(--ui-border)] pb-2">
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ui-border)] pb-2.5">
                 <button
                   type="button"
                   onClick={() => {
                     stopCamera();
                     setAiScanTab('upload');
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
                     aiScanTab === 'upload'
                       ? 'bg-[var(--ui-brand)] text-white'
                       : 'text-[var(--ui-muted)] hover:bg-[var(--ui-surface-hover)]'
                   }`}
                 >
                   <UploadCloud className="w-4 h-4" />
-                  <span>Subir Imagen / PDF</span>
+                  <span>Foto / PDF / XML SRI</span>
                 </button>
                 <button
                   type="button"
@@ -1080,14 +1169,35 @@ export const ReceptionScreen: React.FC = () => {
                     setAiScanTab('camera');
                     startCamera();
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
                     aiScanTab === 'camera'
                       ? 'bg-[var(--ui-brand)] text-white'
                       : 'text-[var(--ui-muted)] hover:bg-[var(--ui-surface-hover)]'
                   }`}
                 >
                   <Camera className="w-4 h-4" />
-                  <span>Tomar Foto con Cámara</span>
+                  <span>Cámara en vivo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopCamera();
+                    setAiScanTab('upload');
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.setAttribute('capture', 'environment');
+                    input.onchange = (e: any) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleFileSelected(e.target.files[0]);
+                      }
+                    };
+                    input.click();
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--ui-brand-soft-border)] bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Camera className="w-4 h-4" />
+                  <span>Cámara del celular (HD)</span>
                 </button>
               </div>
 
@@ -1096,11 +1206,11 @@ export const ReceptionScreen: React.FC = () => {
                 <div
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={handleFileDrop}
-                  className="border-2 border-dashed border-[var(--ui-border)] hover:border-[var(--ui-brand)] rounded-xl p-6 text-center cursor-pointer transition-colors bg-[var(--ui-surface-muted)]"
+                  className="border-2 border-dashed border-[var(--ui-border)] hover:border-[var(--ui-brand)] rounded-xl p-5 text-center cursor-pointer transition-colors bg-[var(--ui-surface-muted)]"
                   onClick={() => {
                     const input = document.createElement('input');
                     input.type = 'file';
-                    input.accept = 'image/*,application/pdf';
+                    input.accept = 'image/*,application/pdf,.xml,text/xml,application/xml';
                     input.onchange = (e: any) => {
                       if (e.target.files && e.target.files[0]) {
                         handleFileSelected(e.target.files[0]);
@@ -1117,18 +1227,72 @@ export const ReceptionScreen: React.FC = () => {
                         className="max-h-56 mx-auto rounded-lg shadow-sm border border-[var(--ui-border)] object-contain"
                       />
                       <p className="text-xs text-[var(--ui-brand-strong)] font-semibold">
-                        ✓ Imagen cargada. Clic para cambiar de archivo.
+                        ✓ Imagen lista y optimizada para IA. Clic para cambiar de archivo.
                       </p>
+                    </div>
+                  ) : selectedFile ? (
+                    <div className="space-y-2 py-3">
+                      <FileText className="w-10 h-10 mx-auto text-[var(--ui-brand-strong)]" />
+                      <p className="font-bold text-sm text-[var(--ui-text)] break-all">
+                        {selectedFile.name}
+                      </p>
+                      <div className="flex items-center justify-center gap-2 text-xs">
+                        <span className="font-mono text-[var(--ui-muted)]">
+                          {(selectedFile.size / 1024).toFixed(1)} KB
+                        </span>
+                        {isSelectedXml ? (
+                          <span className="px-2 py-0.5 rounded-full bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)] font-bold">
+                            XML SRI · Lectura 100% exacta sin API Key
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-[var(--ui-info-bg)] text-[var(--ui-info-text)] border border-[var(--ui-info-border)] font-bold">
+                            PDF listo para analizar
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[var(--ui-muted)]">Clic para cambiar de archivo</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
                       <UploadCloud className="w-10 h-10 mx-auto text-[var(--ui-muted)]" />
                       <p className="font-semibold text-sm text-[var(--ui-text)]">
-                        Arrastra y suelta la foto o PDF de la factura aquí
+                        Sube una foto, PDF o archivo XML (SRI) de la factura
                       </p>
-                      <p className="text-xs text-[var(--ui-muted)]">o haz clic para explorar tus archivos</p>
+                      <p className="text-xs text-[var(--ui-muted)]">
+                        Las fotos de celular se comprimen automáticamente · Los XML del SRI se leen al instante sin API Key
+                      </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* API Key Helper when server doesn't have one configured and file is not XML */}
+              {!hasServerApiKey && !isSelectedXml && (
+                <div className="p-3.5 rounded-xl bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] space-y-2 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-[var(--ui-warning-text)]">
+                    <Key className="w-4 h-4 shrink-0" />
+                    <span>Falta configurar la API Key de Gemini para analizar fotos y PDFs</span>
+                  </div>
+                  <p className="text-[11px] text-[var(--ui-warning-text)] opacity-90">
+                    Pega tu clave de Google AI Studio aquí para analizar fotos/PDFs (o sube el archivo <strong>.xml</strong> de la factura electrónica SRI, que funciona sin clave).
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="password"
+                      value={customApiKey}
+                      onChange={(e) => setCustomApiKey(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="flex-1 px-3 py-1.5 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveServerApiKey}
+                      disabled={!customApiKey.trim() || isSavingApiKey}
+                      className="px-3 py-1.5 rounded-lg bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] disabled:opacity-50 text-white font-bold text-xs shrink-0 cursor-pointer"
+                    >
+                      {isSavingApiKey ? 'Guardando...' : 'Guardar en servidor'}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1158,9 +1322,9 @@ export const ReceptionScreen: React.FC = () => {
 
               {/* Error Alert */}
               {aiError && (
-                <div className="p-3 bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] rounded-xl text-xs text-[var(--ui-danger-text)] flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>{aiError}</span>
+                <div className="p-3 bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] rounded-xl text-xs text-[var(--ui-danger-text)] flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="break-words">{aiError}</span>
                 </div>
               )}
 
@@ -1169,10 +1333,10 @@ export const ReceptionScreen: React.FC = () => {
                 <div className="py-8 text-center space-y-3">
                   <Loader2 className="w-8 h-8 text-[var(--ui-brand-strong)] animate-spin mx-auto" />
                   <p className="font-semibold text-sm text-[var(--ui-text)]">
-                    La IA de Gemini está analizando la factura y vinculando productos...
+                    Analizando factura y vinculando productos con tu inventario...
                   </p>
                   <p className="text-xs text-[var(--ui-muted)]">
-                    Detectando distribuidor, números de factura, cantidades y costos unitarios.
+                    Detectando distribuidor, número de factura, cantidades y costos unitarios.
                   </p>
                 </div>
               )}
@@ -1193,20 +1357,53 @@ export const ReceptionScreen: React.FC = () => {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
                     <div className="bg-[var(--ui-surface)] p-2 rounded border border-[var(--ui-brand-soft-border)]">
                       <div className="text-[10px] text-[var(--ui-muted)] font-sans">Proveedor</div>
-                      <div className="font-bold truncate text-[var(--ui-text)]">{aiResult.proveedor_nombre}</div>
+                      <div className="font-bold truncate text-[var(--ui-text)]">{aiResult.proveedor_nombre || 'Sin detectar'}</div>
                     </div>
                     <div className="bg-[var(--ui-surface)] p-2 rounded border border-[var(--ui-brand-soft-border)]">
                       <div className="text-[10px] text-[var(--ui-muted)] font-sans">Nro Factura</div>
-                      <div className="font-bold text-[var(--ui-text)]">{aiResult.numero_factura}</div>
+                      <div className="font-bold truncate text-[var(--ui-text)]">{aiResult.numero_factura || 'Automático'}</div>
                     </div>
                     <div className="bg-[var(--ui-surface)] p-2 rounded border border-[var(--ui-brand-soft-border)]">
                       <div className="text-[10px] text-[var(--ui-muted)] font-sans">Total Factura</div>
-                      <div className="font-bold text-[var(--ui-brand-strong)]">${aiResult.total.toFixed(2)}</div>
+                      <div className="font-bold text-[var(--ui-brand-strong)]">${(aiResult.total || 0).toFixed(2)}</div>
                     </div>
                     <div className="bg-[var(--ui-surface)] p-2 rounded border border-[var(--ui-brand-soft-border)]">
                       <div className="text-[10px] text-[var(--ui-muted)] font-sans">Fecha</div>
-                      <div className="font-bold text-[var(--ui-text)]">{aiResult.fecha_emision}</div>
+                      <div className="font-bold text-[var(--ui-text)]">{aiResult.fecha_emision || 'Hoy'}</div>
                     </div>
+                  </div>
+
+                  {/* Preview of Detected Items */}
+                  <div className="max-h-48 overflow-y-auto bg-[var(--ui-surface)] rounded-lg border border-[var(--ui-brand-soft-border)] divide-y divide-[var(--ui-border)] text-xs">
+                    {aiResult.items.map((it, idx) => (
+                      <div key={idx} className="px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-[var(--ui-text)] truncate">{it.nombre}</span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                              it.es_nuevo
+                                ? 'bg-[var(--ui-info-bg)] text-[var(--ui-info-text)]'
+                                : 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)]'
+                            }`}>
+                              {it.es_nuevo ? 'NUEVO' : 'CATÁLOGO'}
+                            </span>
+                          </div>
+                          {it.descripcion_factura && it.descripcion_factura !== it.nombre && (
+                            <div className="text-[10px] text-[var(--ui-muted)] truncate">
+                              En factura: {it.descripcion_factura}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right font-mono shrink-0">
+                          <div className="font-bold text-[var(--ui-text)]">
+                            {it.cantidad} × ${formatCostPrice(it.costo_unitario)}
+                          </div>
+                          <div className="text-[10px] text-[var(--ui-brand-strong)] font-bold">
+                            ${(it.subtotal || it.cantidad * it.costo_unitario).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

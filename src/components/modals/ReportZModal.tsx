@@ -3,12 +3,21 @@ import { Printer, CheckCircle2, AlertTriangle, X, Receipt, Download, Lock } from
 import { useStore } from '../../context/StoreContext';
 
 export const ReportZModal: React.FC = () => {
-  const { isReportZModalOpen, setIsReportZModalOpen, cashShift, sales, closeShift, showToast } = useStore();
+  const { isReportZModalOpen, setIsReportZModalOpen, cashShift, sales, closeShift, showToast, storeConfig } = useStore();
   const reportRef = useRef<HTMLDivElement>(null);
 
   if (!isReportZModalOpen) return null;
 
-  const totalSalesCount = sales.length;
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const shiftSales = sales.filter(s => {
+    if (s.status === 'ANULADA') return false;
+    if (cashShift.sessionId && s.sessionId) {
+      return s.sessionId === cashShift.sessionId;
+    }
+    return s.date === todayStr;
+  });
+  const cashTicketsCount = shiftSales.filter(s => s.paymentMethod === 'cash' || s.paymentMethod === 'mixed').length;
+  const transferTicketsCount = shiftSales.filter(s => s.paymentMethod === 'transfer' || s.paymentMethod === 'mixed').length;
   const difference = cashShift.countedCash - cashShift.expectedCash;
   const now = new Date();
   const reportId = `Z-${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-01`;
@@ -78,7 +87,8 @@ export const ReportZModal: React.FC = () => {
           >
             {/* Header info */}
             <div className="text-center space-y-0.5 border-b border-dashed border-[var(--ui-border)] pb-3">
-              <h3 className="font-bold text-sm text-[var(--ui-brand-strong)] font-sans">MI TIENDA FAMILIAR</h3>
+              <h3 className="font-bold text-sm text-[var(--ui-brand-strong)] font-sans uppercase">{storeConfig.storeName}</h3>
+              {storeConfig.ruc && <p className="text-[10px] text-[var(--ui-muted)]">RUC: {storeConfig.ruc}</p>}
               <p className="text-[10px] text-[var(--ui-muted)]">CIERRE DIARIO FISCAL - CORTE Z</p>
               <p className="text-[10px] text-[var(--ui-muted)]">Fecha: {now.toLocaleDateString('es-ES')} {now.toLocaleTimeString('es-ES')}</p>
               <p className="text-[10px] text-[var(--ui-muted)]">Cajero: {cashShift.cashierName}</p>
@@ -91,11 +101,11 @@ export const ReportZModal: React.FC = () => {
                 <span className="font-bold">$ {cashShift.initialCash.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-[var(--ui-brand-strong)]">
-                <span>(+) Ventas Efectivo ({sales.filter(s => s.paymentMethod === 'cash').length} tkts):</span>
+                <span>(+) Ventas Efectivo ({cashTicketsCount} tkts):</span>
                 <span className="font-bold">$ {cashShift.cashSalesTotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-[#0051d5]">
-                <span>(+) Ventas Transferencia ({sales.filter(s => s.paymentMethod === 'transfer').length} tkts):</span>
+                <span>(+) Ventas Transferencia ({transferTicketsCount} tkts):</span>
                 <span className="font-bold">$ {cashShift.transferSalesTotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-[var(--ui-danger-text)]">

@@ -169,6 +169,8 @@ CREATE TABLE IF NOT EXISTS VENTAS (
     MetodoPago VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO' CHECK (MetodoPago IN ('EFECTIVO', 'TRANSFERENCIA', 'MIXTO')),
     MontoRecibido DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (MontoRecibido >= 0),
     Cambio DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (Cambio >= 0),
+    MontoEfectivo DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (MontoEfectivo >= 0),
+    MontoTransferencia DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (MontoTransferencia >= 0),
     CajeroNombre VARCHAR(100),
     Estado VARCHAR(15) NOT NULL DEFAULT 'CONFIRMADA' CHECK (Estado IN ('CONFIRMADA', 'ANULADA')),
     MotivoAnulacion TEXT,
@@ -358,12 +360,17 @@ def init_db():
         conn.executescript(DDL_SCHEMA)
         conn.commit()
         # Safe migrations
-        try:
-            cursor = conn.cursor()
-            cursor.execute("ALTER TABLE VENTAS ADD COLUMN CajeroNombre VARCHAR(100)")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        for alter_sql in (
+            "ALTER TABLE VENTAS ADD COLUMN CajeroNombre VARCHAR(100)",
+            "ALTER TABLE VENTAS ADD COLUMN MontoEfectivo DECIMAL(12, 2) NOT NULL DEFAULT 0.00",
+            "ALTER TABLE VENTAS ADD COLUMN MontoTransferencia DECIMAL(12, 2) NOT NULL DEFAULT 0.00",
+        ):
+            try:
+                cursor = conn.cursor()
+                cursor.execute(alter_sql)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
         seed_initial_data(conn)
         conn.commit()
         bootstrap_security(conn)

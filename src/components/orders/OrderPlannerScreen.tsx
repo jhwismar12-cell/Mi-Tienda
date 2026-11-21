@@ -27,6 +27,7 @@ import { useStore } from '../../context/StoreContext';
 import { api } from '../../services/api';
 import { Product, PurchaseOrder, PurchaseOrderItem } from '../../types';
 import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
+import { useStoreProviders } from '../../utils/providers';
 import {
   OrderArrivalState,
   buildReceptionItemsFromOrder,
@@ -73,14 +74,27 @@ export const OrderPlannerScreen: React.FC = () => {
   }>>([]);
   const [productSearchQuery, setProductSearchQuery] = useState('');
 
-  // Unique suppliers list from catalog
+  const { providers: registeredProviders } = useStoreProviders(true, products);
+
+  // Unique suppliers list from both registered providers and catalog
   const suppliersList = useMemo(() => {
     const set = new Set<string>();
+    registeredProviders.forEach(pr => {
+      if (pr.razon_social) set.add(pr.razon_social);
+    });
     products.forEach(p => {
       if (p.distributor) set.add(p.distributor);
     });
-    return Array.from(set).sort();
-  }, [products]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [registeredProviders, products]);
+
+  const selectedProviderRecord = useMemo(
+    () =>
+      registeredProviders.find(
+        pr => pr.razon_social.trim().toLowerCase() === selectedProviderName.trim().toLowerCase()
+      ),
+    [registeredProviders, selectedProviderName]
+  );
 
   // Filtered orders list
   const filteredOrders = useMemo(() => {
@@ -109,8 +123,13 @@ export const OrderPlannerScreen: React.FC = () => {
 
   // Available products for selected provider when creating order
   const availableProductsForOrder = useMemo(() => {
+    const targetName = selectedProviderName.trim().toLowerCase();
+    const targetId = selectedProviderRecord?.id_proveedor;
     return products.filter(p => {
-      const matchSupplier = !selectedProviderName || p.distributor === selectedProviderName || p.distributor?.includes(selectedProviderName.split(' ')[0]);
+      const matchSupplier =
+        !targetName ||
+        (targetId !== undefined && p.providerId === targetId) ||
+        (p.distributor || '').trim().toLowerCase() === targetName;
       const matchQuery =
         !productSearchQuery ||
         p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
@@ -118,7 +137,51 @@ export const OrderPlannerScreen: React.FC = () => {
         (p.barcode && p.barcode.includes(productSearchQuery));
       return matchSupplier && matchQuery;
     });
-  }, [products, selectedProviderName, productSearchQuery]);
+  }, [products, selectedProviderName, selectedProviderRecord, productSearchQuery]);
+
+  const handleSuggestLowStock = () => {
+    const targetName = selectedProviderName.trim().toLowerCase();
+    const targetId = selectedProviderRecord?.id_proveedor;
+    const lowStockProds = products.filter(p => {
+      const matchSupplier =
+        !targetName ||
+        (targetId !== undefined && p.providerId === targetId) ||
+        (p.distributor || '').trim().toLowerCase() === targetName;
+      return matchSupplier && (p.stock || 0) <= (p.minStock || 5);
+    });
+
+    if (lowStockProds.length === 0) {
+      showToast('No hay productos con stock bajo para este proveedor.');
+      return;
+    }
+
+    setOrderDraftItems(prev => {
+      const next = [...prev];
+      lowStockProds.forEach(prod => {
+        const minStk = prod.minStock > 0 ? prod.minStock : 5;
+        const suggestedQty = Math.max(1, Math.ceil(minStk * 2 - (prod.stock || 0)));
+        const existingIdx = next.findIndex(it => it.productId === prod.id);
+        if (existingIdx >= 0) {
+          next[existingIdx] = {
+            ...next[existingIdx],
+            quantityOrdered: Math.max(next[existingIdx].quantityOrdered, suggestedQty)
+          };
+        } else {
+          next.push({
+            productId: prod.id,
+            code: prod.code,
+            name: prod.name,
+            quantityOrdered: suggestedQty,
+            estimatedCost: prod.costPrice,
+            category: prod.category,
+            barcode: prod.barcode
+          });
+        }
+      });
+      return next;
+    });
+    showToast(`✨ ${lowStockProds.length} producto(s) con stock bajo sugeridos en el pedido`);
+  };
 
   // Add product to order draft
   const handleAddProductToDraft = (prod: Product) => {
@@ -793,11 +856,22 @@ export const OrderPlannerScreen: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Search Products */}
+                {/* Search Products + Sugerir faltantes */}
                 <div>
-                  <label className="block text-xs font-semibold text-[var(--ui-secondary)] mb-1">
-                    Seleccionar Productos del Catálogo
-                  </label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="block text-xs font-semibold text-[var(--ui-secondary)]">
+                      Seleccionar Productos del Catálogo
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleSuggestLowStock}
+                      className="px-2.5 py-1 rounded-lg bg-[var(--ui-warning-bg)] border border-[var(--ui-warning-border)] text-[var(--ui-warning-text)] text-[11px] font-bold flex items-center gap-1 hover:opacity-90 transition-opacity cursor-pointer"
+                      title="Agregar automáticamente productos con stock igual o menor al mínimo"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>Sugerir faltantes</span>
+                    </button>
+                  </div>
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[var(--ui-muted)]" />
                     <input

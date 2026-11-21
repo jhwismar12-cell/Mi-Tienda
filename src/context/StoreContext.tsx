@@ -14,7 +14,9 @@ import {
   PurchaseOrderItem,
   OrderStatus,
   Worker,
-  AuthUser
+  AuthUser,
+  ParkedCart,
+  StoreConfig
 } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_KARDEX, INITIAL_SHIFT, INITIAL_SALES } from '../data/initialData';
 import { sounds } from '../utils/audio';
@@ -71,12 +73,20 @@ export interface StoreContextType {
   clearCart: () => void;
   selectedCartIndex: number;
   setSelectedCartIndex: (index: number) => void;
+  parkedCarts: ParkedCart[];
+  parkCurrentCart: (label?: string) => void;
+  resumeParkedCart: (id: string) => void;
+  deleteParkedCart: (id: string) => void;
 
   // POS Payment
   paymentMethod: PaymentMethod;
   setPaymentMethod: (method: PaymentMethod) => void;
   cashReceived: string;
   setCashReceived: (val: string) => void;
+  cartDiscount: string;
+  setCartDiscount: (val: string) => void;
+  mixedTransferAmount: string;
+  setMixedTransferAmount: (val: string) => void;
   confirmCheckout: () => Promise<Sale | null>;
   isCheckingOut: boolean;
 
@@ -124,6 +134,11 @@ export interface StoreContextType {
   lastCompletedSale: Sale | null;
   setLastCompletedSale: (sale: Sale | null) => void;
   refreshSales: () => Promise<void>;
+  voidSale: (saleId: string, reason: string) => Promise<void>;
+
+  // Store Config
+  storeConfig: StoreConfig;
+  refreshStoreConfig: () => Promise<void>;
 
   // Modals & UI Controls
   isOpenShiftModalOpen: boolean;
@@ -209,17 +224,30 @@ function mapBackendKardex(bk: BackendKardexMovement): KardexMovement {
 }
 
 function mapBackendSale(bs: BackendSale): Sale {
+  const pm: PaymentMethod =
+    bs.metodo_pago === 'TRANSFERENCIA'
+      ? 'transfer'
+      : bs.metodo_pago === 'MIXTO'
+        ? 'mixed'
+        : 'cash';
   return {
     id: String(bs.id_venta),
+    sessionId: bs.id_sesion_caja,
     ticketNumber: bs.numero_venta,
     date: bs.fecha_hora ? bs.fecha_hora.split(' ')[0] : new Date().toISOString().split('T')[0],
     time: bs.fecha_hora ? bs.fecha_hora.split(' ')[1] || '00:00' : '00:00',
     subtotal: bs.total,
+    discount: bs.descuento || 0,
+    total: bs.total,
     totalArticles: bs.items ? bs.items.length : 0,
     totalUnits: bs.items ? bs.items.reduce((acc, it) => acc + it.cantidad, 0) : 0,
-    paymentMethod: bs.metodo_pago === 'TRANSFERENCIA' ? 'transfer' : 'cash',
+    paymentMethod: pm,
     cashReceived: bs.monto_recibido,
     change: bs.cambio,
+    cashAmount: bs.monto_efectivo ?? (pm === 'cash' ? bs.total : 0),
+    transferAmount: bs.monto_transferencia ?? (pm === 'transfer' ? bs.total : 0),
+    status: bs.estado === 'ANULADA' ? 'ANULADA' : 'CONFIRMADA',
+    voidReason: bs.motivo_anulacion || undefined,
     cashierName: bs.cajero_nombre || 'Admin',
     items: bs.items ? bs.items.map(it => ({
       productId: String(it.id_producto),
@@ -328,6 +356,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [selectedCartIndex, setSelectedCartIndex] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [cashReceived, setCashReceived] = useState<string>('0.00');
+  const [cartDiscount, setCartDiscount] = useState<string>('0.00');
+  const [mixedTransferAmount, setMixedTransferAmount] = useState<string>('0.00');
+  const [parkedCarts, setParkedCarts] = useState<ParkedCart[]>(() => {
+    try {
+      const raw = localStorage.getItem('tienda_parked_carts');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [storeConfig, setStoreConfig] = useState<StoreConfig>(() => {
+    try {
+      const raw = localStorage.getItem('tienda_store_config');
+      if (raw) return JSON.parse(raw);
+    } catch { /* noop */ }
+    return {
+      storeName: 'MI TIENDA FAMILIAR',
+      ruc: '1792348590001',
+      address: 'Dirección de la Tienda',
+      phone: '',
+      receiptFooter: '¡Gracias por su compra! Vuelva pronto.'
+    };
+  });
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const checkoutInFlight = useRef(false);
   const checkoutAttempt = useRef<{ signature: string; key: string } | null>(null);
@@ -509,11 +560,32 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const refreshProducts = useCallback(async () => {
     try {
       const backendProds = await api.getProductos();
-      if (backendProds && backendProds.length > 0) {
+      if (Array.isArray(backendProds)) {
         setProducts(backendProds.map(mapBackendProduct));
       }
     } catch (e) {
       console.warn('Usando productos locales');
+    }
+  }, []);
+
+  const refreshStoreConfig = useCallback(async () => {
+    try {
+      const cfg = await api.getConfiguracion();
+      if (cfg && typeof cfg === 'object') {
+        const next: StoreConfig = {
+          storeName: cfg.NOMBRE_TIENDA || cfg.NombreTienda || cfg.nombre_tienda || 'MI TIENDA FAMILIAR',
+          ruc: cfg.RUC_TIENDA || cfg.RUC || cfg.ruc || '1792348590001',
+          address: cfg.DIRECCION_TIENDA || cfg.Direccion || cfg.direccion || 'Dirección de la Tienda',
+          phone: cfg.TELEFONO_TIENDA || cfg.Telefono || cfg.telefono || '',
+          receiptFooter: cfg.PIE_TICKET || cfg.MensajeTicket || cfg.PieTicket || '¡Gracias por su compra! Vuelva pronto.'
+        };
+        setStoreConfig(next);
+        try {
+          localStorage.setItem('tienda_store_config', JSON.stringify(next));
+        } catch { /* noop */ }
+      }
+    } catch {
+      // keep cached config
     }
   }, []);
 
@@ -577,13 +649,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   useEffect(() => {
+    if (!currentUser) return;
     refreshProducts();
     refreshKardex();
     refreshCashShift();
     refreshPurchaseOrders();
     refreshWorkers();
     refreshSales();
-  }, [refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales]);
+    refreshStoreConfig();
+  }, [currentUser, refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales, refreshStoreConfig]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tienda_parked_carts', JSON.stringify(parkedCarts));
+    } catch { /* noop */ }
+  }, [parkedCarts]);
 
   const loginUser = useCallback(async (username: string, password: string): Promise<AuthUser> => {
     const res = await api.login(username.trim(), password);
@@ -826,7 +906,61 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setCart([]);
     setSelectedCartIndex(0);
     setCashReceived('0.00');
+    setCartDiscount('0.00');
+    setMixedTransferAmount('0.00');
   };
+
+  const parkCurrentCart = useCallback((label?: string) => {
+    if (cart.length === 0) {
+      showToast('El carrito está vacío; no hay nada para pausar.');
+      return;
+    }
+    if (parkedCarts.length >= 5) {
+      showToast('Máximo 5 ventas en espera. Retoma o elimina una primero.');
+      return;
+    }
+    const nowTime = new Date().toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
+    const discNum = Math.max(0, Number(parseFloat(cartDiscount) || 0));
+    const entry: ParkedCart = {
+      id: `park-${Date.now()}`,
+      label: (label || '').trim() || `Cliente ${parkedCarts.length + 1} (${nowTime})`,
+      createdAt: nowTime,
+      items: cart,
+      discount: discNum
+    };
+    setParkedCarts(prev => [entry, ...prev]);
+    clearCart();
+    showToast(`⏸ Venta pausada: ${entry.label}`);
+  }, [cart, cartDiscount, parkedCarts.length, showToast]);
+
+  const resumeParkedCart = useCallback((id: string) => {
+    const target = parkedCarts.find(p => p.id === id);
+    if (!target) return;
+    if (cart.length > 0) {
+      const nowTime = new Date().toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
+      const currentEntry: ParkedCart = {
+        id: `park-${Date.now()}`,
+        label: `En espera (${nowTime})`,
+        createdAt: nowTime,
+        items: cart,
+        discount: Math.max(0, Number(parseFloat(cartDiscount) || 0))
+      };
+      setParkedCarts(prev => [currentEntry, ...prev.filter(p => p.id !== id)]);
+    } else {
+      setParkedCarts(prev => prev.filter(p => p.id !== id));
+    }
+    setCart(target.items);
+    setSelectedCartIndex(0);
+    setCartDiscount((target.discount || 0).toFixed(2));
+    setCashReceived('0.00');
+    setMixedTransferAmount('0.00');
+    showToast(`▶ Venta retomada: ${target.label}`);
+  }, [parkedCarts, cart, cartDiscount, showToast]);
+
+  const deleteParkedCart = useCallback((id: string) => {
+    setParkedCarts(prev => prev.filter(p => p.id !== id));
+    showToast('Venta en espera descartada');
+  }, [showToast]);
 
   // Alta al Vuelo
   const handleSaveAltaAlVuelo = async (data: {
@@ -868,12 +1002,39 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     const subtotal = Number(cart.reduce((acc, item) => acc + item.subtotal, 0).toFixed(2));
-    const totalUnits = Number(cart.reduce((acc, item) => acc + item.quantity, 0).toFixed(3));
-    const cashNum = paymentMethod === 'cash' ? Number(cashReceived) : subtotal;
-    if (!Number.isFinite(cashNum) || cashNum < 0 || (paymentMethod === 'cash' && Math.round(cashNum * 100) < Math.round(subtotal * 100))) {
-      showToast('El efectivo recibido es insuficiente para cubrir el total.');
+    const discountNum = Number(Math.max(0, parseFloat(cartDiscount) || 0).toFixed(2));
+    if (discountNum > subtotal) {
+      showToast('El descuento no puede superar el subtotal de la venta.');
       return null;
     }
+    const finalTotal = Number((subtotal - discountNum).toFixed(2));
+    const totalUnits = Number(cart.reduce((acc, item) => acc + item.quantity, 0).toFixed(3));
+
+    let cashNum = finalTotal;
+    let transferNum = 0;
+    if (paymentMethod === 'cash') {
+      cashNum = Number(cashReceived);
+      if (!Number.isFinite(cashNum) || cashNum < 0 || Math.round(cashNum * 100) < Math.round(finalTotal * 100)) {
+        showToast('El efectivo recibido es insuficiente para cubrir el total.');
+        return null;
+      }
+    } else if (paymentMethod === 'transfer') {
+      cashNum = 0;
+      transferNum = finalTotal;
+    } else {
+      // Pago Mixto
+      cashNum = Number(cashReceived) || 0;
+      transferNum = Number(mixedTransferAmount) || 0;
+      if (!Number.isFinite(cashNum) || !Number.isFinite(transferNum) || cashNum < 0 || transferNum < 0) {
+        showToast('Revisa los montos de efectivo y transferencia.');
+        return null;
+      }
+      if (Math.round((cashNum + transferNum) * 100) < Math.round(finalTotal * 100)) {
+        showToast('La suma de efectivo + transferencia no cubre el total.');
+        return null;
+      }
+    }
+
     const saleItems = cart.map(it => ({
       productId: it.product.id,
       code: it.product.code,
@@ -886,15 +1047,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     const currentCashier = activeWorkerName || cashShift.cashierName || 'Wismar (Administrador)';
     const payload = {
-        id_sesion_caja: cashShift.sessionId,
-        items: cart.map(it => ({
-          id_producto: parseInt(it.product.id),
-          cantidad: it.quantity,
-          precio_unitario: it.unitPrice
-        })),
-        metodo_pago: paymentMethod === 'cash' ? 'EFECTIVO' as const : 'TRANSFERENCIA' as const,
-        monto_recibido: cashNum,
-        cajero_nombre: currentCashier
+      id_sesion_caja: cashShift.sessionId,
+      items: cart.map(it => ({
+        id_producto: parseInt(it.product.id),
+        cantidad: it.quantity,
+        precio_unitario: it.unitPrice
+      })),
+      metodo_pago:
+        paymentMethod === 'cash'
+          ? ('EFECTIVO' as const)
+          : paymentMethod === 'transfer'
+            ? ('TRANSFERENCIA' as const)
+            : ('MIXTO' as const),
+      monto_recibido: paymentMethod === 'transfer' ? finalTotal : cashNum,
+      monto_efectivo: paymentMethod === 'mixed' ? cashNum : undefined,
+      monto_transferencia: paymentMethod === 'mixed' ? transferNum : undefined,
+      descuento: discountNum,
+      cajero_nombre: currentCashier
     };
     const signature = JSON.stringify(payload);
     if (checkoutAttempt.current && checkoutAttempt.current.signature !== signature) {
@@ -912,16 +1081,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       const completedSale: Sale = {
         id: String(res.id_venta),
+        sessionId: res.id_sesion_caja,
         ticketNumber: res.numero_venta,
         date: res.fecha_hora.split(' ')[0],
         time: res.fecha_hora.split(' ')[1] || '00:00',
         items: saleItems,
-        subtotal: res.subtotal,
+        subtotal: res.total,
+        discount: res.descuento || 0,
+        total: res.total,
         totalArticles: cart.length,
         totalUnits,
         paymentMethod,
         cashReceived: res.monto_recibido,
         change: res.cambio,
+        cashAmount: res.monto_efectivo ?? (paymentMethod === 'cash' ? res.total : 0),
+        transferAmount: res.monto_transferencia ?? (paymentMethod === 'transfer' ? res.total : 0),
+        status: 'CONFIRMADA',
         cashierName: res.cajero_nombre || currentCashier
       };
 
@@ -946,6 +1121,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } finally {
       checkoutInFlight.current = false;
       setIsCheckingOut(false);
+    }
+  };
+
+  const voidSale = async (saleId: string, reason: string) => {
+    const numId = parseInt(saleId, 10);
+    if (isNaN(numId)) {
+      throw new Error('ID de venta inválido.');
+    }
+    try {
+      const res = await api.anularVenta(numId, reason.trim());
+      const mapped = mapBackendSale(res);
+      setSales(prev => prev.map(s => (s.id === saleId ? mapped : s)));
+      await Promise.all([refreshProducts(), refreshKardex(), refreshCashShift()]);
+      showToast(`Ticket #${mapped.ticketNumber} anulado y stock restaurado`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'No se pudo anular la venta';
+      showToast(`⚠️ ${msg}`);
+      throw error;
     }
   };
 
@@ -1016,6 +1209,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
       }
     } catch (e) {
+      if (e instanceof ApiError) {
+        showToast(`⚠️ No se pudo actualizar el producto: ${e.message}`);
+        throw e;
+      }
       console.warn('Actualización local:', e);
     }
     setProducts(prev =>
@@ -1291,10 +1488,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       await api.registrarCompra({
         id_proveedor: invoice.providerId,
         numero_documento: invoice.invoiceNumber,
-        items: invoice.items.map(it => ({
-          codigo: it.code, nombre: it.name, cantidad: it.quantityReceived,
-          costo_unitario: it.unitCost, precio_venta_sugerido: it.suggestedSalePrice || it.salePrice
-        })),
+        items: invoice.items.map(it => {
+          const matchedProd = !it.isNewProduct
+            ? products.find(p => p.code === it.code || p.barcode === it.code || p.id === it.id)
+            : undefined;
+          const numericId = matchedProd ? parseInt(matchedProd.id, 10) : NaN;
+          return {
+            id_producto: Number.isInteger(numericId) && numericId > 0 ? numericId : undefined,
+            codigo: it.code,
+            nombre: it.name,
+            cantidad: it.quantityReceived,
+            costo_unitario: it.unitCost,
+            precio_venta_sugerido: it.suggestedSalePrice || it.salePrice
+          };
+        }),
         observaciones: `Recepción de mercadería ${invoice.provider}`
       });
       await Promise.all([refreshProducts(), refreshKardex()]);
@@ -1319,11 +1526,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         proveedor_nombre: orderData.providerName,
         fecha_estimada_entrega: orderData.expectedDeliveryDate,
         notas: orderData.notes,
-        items: orderData.items.map(it => ({
-          id_producto: parseInt(it.productId) || 1,
-          cantidad_pedida: it.quantityOrdered,
-          costo_estimado: it.estimatedCost
-        }))
+        items: orderData.items.map(it => {
+          const parsedId = parseInt(it.productId, 10);
+          if (!Number.isInteger(parsedId) || parsedId <= 0) {
+            throw new Error(`El producto "${it.name}" no tiene un ID válido.`);
+          }
+          return {
+            id_producto: parsedId,
+            cantidad_pedida: it.quantityOrdered,
+            costo_estimado: it.estimatedCost
+          };
+        })
       });
       const mapped = mapBackendPedido(created);
       setPurchaseOrders(prev => [mapped, ...prev]);
@@ -1374,11 +1587,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           estado: updates.status,
           fecha_estimada_entrega: updates.expectedDeliveryDate,
           notas: updates.notes,
-          items: updates.items ? updates.items.map(it => ({
-            id_producto: parseInt(it.productId) || 1,
-            cantidad_pedida: it.quantityOrdered,
-            costo_estimado: it.estimatedCost
-          })) : undefined
+          items: updates.items ? updates.items.map(it => {
+            const parsedId = parseInt(it.productId, 10);
+            if (!Number.isInteger(parsedId) || parsedId <= 0) {
+              throw new Error(`El producto "${it.name}" no tiene un ID válido.`);
+            }
+            return {
+              id_producto: parsedId,
+              cantidad_pedida: it.quantityOrdered,
+              costo_estimado: it.estimatedCost
+            };
+          }) : undefined
         });
         refreshPurchaseOrders();
         showToast('Pedido actualizado');
@@ -1480,6 +1699,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setPaymentMethod,
         cashReceived,
         setCashReceived,
+        cartDiscount,
+        setCartDiscount,
+        mixedTransferAmount,
+        setMixedTransferAmount,
+        parkedCarts,
+        parkCurrentCart,
+        resumeParkedCart,
+        deleteParkedCart,
         confirmCheckout,
         isCheckingOut,
         kardexMovements,
@@ -1546,6 +1773,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         deleteWorker,
         setActiveWorker,
         refreshSales,
+        voidSale,
+        storeConfig,
+        refreshStoreConfig,
         toastMessage,
         showToast
       }}

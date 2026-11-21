@@ -48,7 +48,10 @@ export interface BackendSale {
   metodo_pago: string;
   monto_recibido: number;
   cambio: number;
+  monto_efectivo?: number;
+  monto_transferencia?: number;
   estado: string;
+  motivo_anulacion?: string | null;
   items: BackendSaleItem[];
 }
 
@@ -97,8 +100,16 @@ export interface BackendCashSession {
 }
 
 export interface BackendDashboard {
+  fecha_inicio: string;
+  fecha_fin: string;
   ventas_hoy_total: number;
   tickets_hoy_total: number;
+  tickets_efectivo: number;
+  tickets_transferencia: number;
+  tickets_mixto: number;
+  tickets_anulados: number;
+  ventas_efectivo_total: number;
+  ventas_transferencia_total: number;
   ganancia_bruta_hoy: number;
   margen_promedio_hoy: number;
   valor_inventario_costo: number;
@@ -108,6 +119,14 @@ export interface BackendDashboard {
   costos_incrementados_recientes: number;
   caja_activa?: BackendCashSession;
   ventas_por_hora: Array<{ hora: string; monto: number; tickets: number }>;
+  top_productos: Array<{
+    id_producto: number;
+    codigo: string;
+    nombre: string;
+    unidades: number;
+    ingresos: number;
+    ganancia: number;
+  }>;
 }
 
 const rawApiUrl = (import.meta.env?.VITE_API_URL || '').trim().replace(/\/+$/, '');
@@ -274,11 +293,19 @@ export const api = {
     items: Array<{ id_producto: number; cantidad: number; precio_unitario: number; descuento?: number }>;
     metodo_pago: 'EFECTIVO' | 'TRANSFERENCIA' | 'MIXTO';
     monto_recibido: number;
+    monto_efectivo?: number;
+    monto_transferencia?: number;
     descuento?: number;
   }) =>
     request<BackendSale>('/ventas/cobrar', {
       method: 'POST',
       body: JSON.stringify(data)
+    }),
+
+  anularVenta: (idVenta: number, motivo: string) =>
+    request<BackendSale>(`/ventas/${idVenta}/anular`, {
+      method: 'POST',
+      body: JSON.stringify({ motivo })
     }),
 
   getVentas: (limit: number = 50) => request<BackendSale[]>(`/ventas?limit=${limit}`),
@@ -353,6 +380,8 @@ export const api = {
   // Cash Register Sessions
   getCajaActiva: () => request<BackendCashSession | null>('/caja/activa'),
 
+  getHistorialCaja: (limit: number = 30) => request<BackendCashSession[]>(`/caja/historial?limit=${limit}`),
+
   abrirCaja: (montoInicial: number, observaciones?: string) =>
     request<BackendCashSession>('/caja/abrir', {
       method: 'POST',
@@ -378,7 +407,12 @@ export const api = {
     }),
 
   // Dashboard & KPIs
-  getDashboard: () => request<BackendDashboard>('/dashboard'),
+  getDashboard: (fechaInicio?: string, fechaFin?: string) => {
+    const params: string[] = [];
+    if (fechaInicio) params.push(`fecha_inicio=${encodeURIComponent(fechaInicio)}`);
+    if (fechaFin) params.push(`fecha_fin=${encodeURIComponent(fechaFin)}`);
+    return request<BackendDashboard>(`/dashboard${params.length ? `?${params.join('&')}` : ''}`);
+  },
 
   // Backups
   generarBackup: () =>

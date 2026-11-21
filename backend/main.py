@@ -20,7 +20,7 @@ from backend.models import (
     LoginRequest, LoginResponse, UserInfo, CambiarClaveRequest, AsignarClaveTrabajadorRequest,
     ProductoOut, ProductoCreate, ProductoUpdate, ProductoRapidoRequest,
     CategoriaOut, ProveedorOut, ProveedorCreate, ProveedorUpdate,
-    VentaCobrarRequest, VentaOut,
+    VentaCobrarRequest, VentaAnularRequest, VentaOut,
     CompraRegistrarRequest, CompraOut,
     AjusteInventarioRequest, DevolucionProductoRequest, KardexMovimientoOut,
     CajaAbrirRequest, CajaCerrarRequest, CajaMovimientoRequest,
@@ -29,7 +29,7 @@ from backend.models import (
     TrabajadorOut, TrabajadorCreate
 )
 from backend import services
-from backend.ai_vision import process_invoice_with_gemini, get_api_key, set_api_key
+from backend.ai_vision import process_invoice_with_gemini, parse_sri_invoice_xml, get_api_key, set_api_key
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -234,9 +234,9 @@ def buscar_productos_endpoint(query: str = Query(..., description="Codigo de bar
     }
 
 @app.post("/api/productos/rapido", response_model=ProductoOut, tags=["Productos"])
-def alta_al_vuelo(data: ProductoRapidoRequest):
+def alta_al_vuelo(data: ProductoRapidoRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
-        return services.crear_producto_rapido(data)
+        return services.crear_producto_rapido(data, id_usuario=current_user.id_usuario)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -245,14 +245,14 @@ def listar_productos():
     return services.get_all_products()
 
 @app.post("/api/productos", response_model=ProductoOut, tags=["Productos"])
-def crear_producto(data: ProductoCreate):
+def crear_producto(data: ProductoCreate, current_user: UserInfo = Depends(get_current_user)):
     try:
-        return services.crear_producto(data)
+        return services.crear_producto(data, id_usuario=current_user.id_usuario)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.put("/api/productos/{id_producto}", response_model=ProductoOut, tags=["Productos"])
-def actualizar_producto(id_producto: int, data: ProductoUpdate):
+def actualizar_producto(id_producto: int, data: ProductoUpdate, current_user: UserInfo = Depends(get_current_user)):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM PRODUCTOS WHERE IDProducto = ?", (id_producto,))
@@ -296,20 +296,50 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
             updates.append("Activo = ?")
             params.append(int(data.activo))
 
-        updates.append("FechaModificacion = CURRENT_TIMESTAMP")
+        # Validate barcodes before mutating the product
+        valid_barcodes = None
+        if data.codigos_barras is not None:
+            try:
+                valid_barcodes = services.validar_y_liberar_codigos_barras(
+                    cursor, data.codigos_barras, exclude_product_id=id_producto
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        fecha_mod = services.now_local_str()
+        updates.append("FechaModificacion = ?")
+        params.append(fecha_mod)
         params.append(id_producto)
 
-        cursor.execute(f"UPDATE PRODUCTOS SET {', '.join(updates)} WHERE IDProducto = ?", params)
+        try:
+            cursor.execute(f"UPDATE PRODUCTOS SET {', '.join(updates)} WHERE IDProducto = ?", params)
+        except Exception as e:
+            if "UNIQUE" in str(e).upper():
+                raise HTTPException(status_code=400, detail="Ya existe otro producto con ese código interno.")
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Log price changes in HISTORIAL_PRECIOS
+        if data.precio_compra_actual is not None and abs(float(data.precio_compra_actual) - float(existing["PrecioCompraActual"])) > 0.001:
+            cursor.execute(
+                """INSERT INTO HISTORIAL_PRECIOS (FechaHora, IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo)
+                   VALUES (?, ?, 'COMPRA', ?, ?, ?, 'Edición manual de producto')""",
+                (fecha_mod, id_producto, float(existing["PrecioCompraActual"]), float(data.precio_compra_actual), current_user.id_usuario)
+            )
+        if data.precio_venta_actual is not None and abs(float(data.precio_venta_actual) - float(existing["PrecioVentaActual"])) > 0.001:
+            cursor.execute(
+                """INSERT INTO HISTORIAL_PRECIOS (FechaHora, IDProducto, TipoPrecio, PrecioAnterior, PrecioNuevo, IDUsuario, Motivo)
+                   VALUES (?, ?, 'VENTA', ?, ?, ?, 'Edición manual de producto')""",
+                (fecha_mod, id_producto, float(existing["PrecioVentaActual"]), float(data.precio_venta_actual), current_user.id_usuario)
+            )
 
         # Update barcodes if provided
-        if data.codigos_barras is not None:
+        if valid_barcodes is not None:
             cursor.execute("DELETE FROM PRODUCTO_CODIGOS_BARRAS WHERE IDProducto = ?", (id_producto,))
-            for idx, bc in enumerate(data.codigos_barras):
-                if bc.strip():
-                    cursor.execute(
-                        "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, ?)",
-                        (id_producto, bc.strip(), 1 if idx == 0 else 0)
-                    )
+            for idx, bc in enumerate(valid_barcodes):
+                cursor.execute(
+                    "INSERT INTO PRODUCTO_CODIGOS_BARRAS (IDProducto, CodigoBarras, EsPrincipal) VALUES (?, ?, ?)",
+                    (id_producto, bc, 1 if idx == 0 else 0)
+                )
 
     for p in services.get_all_products():
         if p.id_producto == id_producto:
@@ -317,15 +347,24 @@ def actualizar_producto(id_producto: int, data: ProductoUpdate):
     raise HTTPException(status_code=404, detail="Producto no encontrado tras actualizar.")
 
 @app.delete("/api/productos/{id_producto}", tags=["Productos"])
-def eliminar_producto(id_producto: int):
+def eliminar_producto(id_producto: int, _admin: UserInfo = Depends(require_admin)):
     return services.eliminar_producto(id_producto)
 
 # --- 3. POS Sales Endpoints ---
 @app.post("/api/ventas/cobrar", response_model=VentaOut, tags=["Ventas"])
-def cobrar_venta_endpoint(data: VentaCobrarRequest):
+def cobrar_venta_endpoint(data: VentaCobrarRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
+        if not data.id_usuario or data.id_usuario == 1:
+            data.id_usuario = current_user.id_usuario
         return services.cobrar_venta(data)
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/ventas/{id_venta}/anular", response_model=VentaOut, tags=["Ventas"])
+def anular_venta_endpoint(id_venta: int, data: VentaAnularRequest, admin: UserInfo = Depends(require_admin)):
+    try:
+        return services.anular_venta(id_venta, data.motivo, id_usuario=admin.id_usuario)
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/ventas", response_model=List[VentaOut], tags=["Ventas"])
@@ -381,7 +420,10 @@ def listar_ventas(limit: int = 50):
                     metodo_pago=sr["MetodoPago"],
                     monto_recibido=float(sr["MontoRecibido"]),
                     cambio=float(sr["Cambio"]),
+                    monto_efectivo=float(sr["MontoEfectivo"]) if "MontoEfectivo" in sr.keys() and sr["MontoEfectivo"] is not None else (float(sr["Total"]) if sr["MetodoPago"] == "EFECTIVO" else 0.0),
+                    monto_transferencia=float(sr["MontoTransferencia"]) if "MontoTransferencia" in sr.keys() and sr["MontoTransferencia"] is not None else (float(sr["Total"]) if sr["MetodoPago"] != "EFECTIVO" else 0.0),
                     estado=sr["Estado"],
+                    motivo_anulacion=sr["MotivoAnulacion"] if "MotivoAnulacion" in sr.keys() else None,
                     items=items
                 )
             )
@@ -389,8 +431,9 @@ def listar_ventas(limit: int = 50):
 
 # --- 4. Purchases Reception Endpoints ---
 @app.post("/api/compras/registrar", response_model=CompraOut, tags=["Compras"])
-def registrar_compra_endpoint(data: CompraRegistrarRequest):
+def registrar_compra_endpoint(data: CompraRegistrarRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
+        data.id_usuario = current_user.id_usuario
         return services.registrar_compra(data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -466,21 +509,22 @@ def kardex_general(
     return services.obtener_kardex(id_producto=None, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
 
 @app.post("/api/inventario/ajuste", response_model=KardexMovimientoOut, tags=["Inventario"])
-def ajuste_inventario_endpoint(data: AjusteInventarioRequest):
+def ajuste_inventario_endpoint(data: AjusteInventarioRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
+        data.id_usuario = current_user.id_usuario
         return services.ajustar_inventario(data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/inventario/movimientos/{id_movimiento}", tags=["Inventario"])
-def eliminar_movimiento_endpoint(id_movimiento: int, revertir_stock: bool = True):
+def eliminar_movimiento_endpoint(id_movimiento: int, revertir_stock: bool = True, _admin: UserInfo = Depends(require_admin)):
     try:
         return services.eliminar_movimiento_inventario(id_movimiento, revertir_stock=revertir_stock)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/inventario/devolucion", tags=["Inventario"])
-def registrar_devolucion_endpoint(data: DevolucionProductoRequest):
+def registrar_devolucion_endpoint(data: DevolucionProductoRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
         return services.registrar_devolucion_producto(
             id_producto=data.id_producto,
@@ -489,7 +533,7 @@ def registrar_devolucion_endpoint(data: DevolucionProductoRequest):
             referencia_id=data.referencia_id,
             afecta_caja=data.afecta_caja,
             monto_devolucion=data.monto_devolucion or 0.0,
-            id_usuario=data.id_usuario or 1
+            id_usuario=current_user.id_usuario
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -499,51 +543,59 @@ def registrar_devolucion_endpoint(data: DevolucionProductoRequest):
 def caja_activa_endpoint():
     return services.obtener_caja_activa()
 
+@app.get("/api/caja/historial", response_model=List[SesionCajaOut], tags=["Caja"])
+def historial_caja_endpoint(limit: int = 30):
+    return services.obtener_historial_caja(limit=limit)
+
 @app.post("/api/caja/abrir", response_model=SesionCajaOut, tags=["Caja"])
-def abrir_caja_endpoint(data: CajaAbrirRequest):
+def abrir_caja_endpoint(data: CajaAbrirRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
+        data.id_usuario = current_user.id_usuario
         return services.abrir_caja(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/caja/cerrar", response_model=SesionCajaOut, tags=["Caja"])
-def cerrar_caja_endpoint(data: CajaCerrarRequest):
+def cerrar_caja_endpoint(data: CajaCerrarRequest, _user: UserInfo = Depends(get_current_user)):
     try:
         return services.cerrar_caja(data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/caja/movimiento", response_model=SesionCajaOut, tags=["Caja"])
-def registrar_movimiento_caja(data: CajaMovimientoRequest):
+def registrar_movimiento_caja(data: CajaMovimientoRequest, current_user: UserInfo = Depends(get_current_user)):
     try:
+        data.id_usuario = current_user.id_usuario
         return services.registrar_movimiento_caja(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.put("/api/caja/fondo-inicial", response_model=SesionCajaOut, tags=["Caja"])
-def actualizar_fondo_inicial_endpoint(data: dict = Body(...)):
+def actualizar_fondo_inicial_endpoint(data: dict = Body(...), current_user: UserInfo = Depends(get_current_user)):
     monto = float(data.get("monto_inicial", 0.0))
-    user_id = int(data.get("id_usuario", 1))
     try:
-        return services.actualizar_fondo_inicial(monto, user_id)
+        return services.actualizar_fondo_inicial(monto, current_user.id_usuario)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- 7. Dashboard Endpoints ---
 @app.get("/api/dashboard", response_model=DashboardKPIsOut, tags=["Dashboard"])
-def dashboard_endpoint():
-    return services.obtener_dashboard_kpis()
+def dashboard_endpoint(
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+):
+    return services.obtener_dashboard_kpis(fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
 
 # --- 8. Backups Endpoints ---
 @app.post("/api/backups/generar", response_model=BackupResponse, tags=["Backups"])
-def generar_backup_endpoint():
+def generar_backup_endpoint(_admin: UserInfo = Depends(require_admin)):
     try:
         return services.generar_backup_database()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/backups/descargar/{filename}", tags=["Backups"])
-def descargar_backup(filename: str):
+def descargar_backup(filename: str, _admin: UserInfo = Depends(require_admin)):
     safe_name = os.path.basename(filename)
     file_path = os.path.join(get_backup_dir(), safe_name)
     if not os.path.exists(file_path):
@@ -672,7 +724,7 @@ def actualizar_proveedor(id_proveedor: int, data: ProveedorUpdate):
         )
 
 @app.delete("/api/proveedores/{id_proveedor}", tags=["Auxiliares"])
-def eliminar_proveedor(id_proveedor: int):
+def eliminar_proveedor(id_proveedor: int, _admin: UserInfo = Depends(require_admin)):
     return services.eliminar_proveedor(id_proveedor)
 
 @app.get("/api/configuracion", tags=["Configuracion"])
@@ -687,7 +739,7 @@ def obtener_configuracion():
         }
 
 @app.post("/api/configuracion", tags=["Configuracion"])
-def guardar_configuracion(config: dict):
+def guardar_configuracion(config: dict, _admin: UserInfo = Depends(require_admin)):
     with get_db() as conn:
         cursor = conn.cursor()
         for k, v in config.items():
@@ -711,7 +763,7 @@ def get_ia_config():
     }
 
 @app.post("/api/ia/config", tags=["IA"])
-def save_ia_config(data: dict = Body(...)):
+def save_ia_config(data: dict = Body(...), _admin: UserInfo = Depends(require_admin)):
     key = data.get("api_key", "").strip()
     if not key:
         raise HTTPException(status_code=400, detail="La API Key no puede estar vacía.")
@@ -727,25 +779,55 @@ async def procesar_factura_ia(
 ):
     try:
         raw_bytes = None
-        actual_mime = mime_type or "image/jpeg"
+        actual_mime = (mime_type or "image/jpeg").strip().lower()
+        filename = ""
 
         if file:
             raw_bytes = await file.read()
-            actual_mime = file.content_type or "image/jpeg"
+            filename = (file.filename or "").strip().lower()
+            if file.content_type:
+                actual_mime = file.content_type.strip().lower()
+            elif filename.endswith(".pdf"):
+                actual_mime = "application/pdf"
+            elif filename.endswith(".png"):
+                actual_mime = "image/png"
+            elif filename.endswith(".webp"):
+                actual_mime = "image/webp"
+            elif filename.endswith(".xml"):
+                actual_mime = "application/xml"
         elif image_base64:
             b64 = image_base64
             if "," in b64:
                 prefix, b64 = b64.split(",", 1)
-                if "image/png" in prefix:
+                prefix_low = prefix.lower()
+                if "application/pdf" in prefix_low:
+                    actual_mime = "application/pdf"
+                elif "image/png" in prefix_low:
                     actual_mime = "image/png"
-                elif "image/webp" in prefix:
+                elif "image/webp" in prefix_low:
                     actual_mime = "image/webp"
+                elif "xml" in prefix_low:
+                    actual_mime = "application/xml"
             raw_bytes = base64.b64decode(b64)
         else:
             raise HTTPException(status_code=400, detail="Debe proporcionar un archivo o una imagen en Base64.")
 
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="El archivo enviado está vacío.")
+
+        # Soporte nativo 100% exacto para Factura Electrónica XML del SRI Ecuador (sin API Key)
+        is_xml = (
+            filename.endswith(".xml")
+            or "xml" in actual_mime
+            or raw_bytes.lstrip()[:1] == b"<"
+        )
+        if is_xml:
+            return parse_sri_invoice_xml(raw_bytes)
+
         result = process_invoice_with_gemini(raw_bytes, mime_type=actual_mime, api_key=api_key)
         return result
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
