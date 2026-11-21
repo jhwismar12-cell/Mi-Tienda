@@ -71,11 +71,6 @@ export const SettingsScreen: React.FC = () => {
   const [myNewPwd, setMyNewPwd] = useState('');
   const [isChangingMyPwd, setIsChangingMyPwd] = useState(false);
 
-  // AI Configuration State
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [isAiConfigured, setIsAiConfigured] = useState(false);
-  const [isSavingAiKey, setIsSavingAiKey] = useState(false);
-
   useEffect(() => {
     api.getConfiguracion().then(conf => {
       if (conf.NOMBRE_TIENDA) setStoreName(conf.NOMBRE_TIENDA);
@@ -87,31 +82,7 @@ export const SettingsScreen: React.FC = () => {
         setPrinterWidth(conf.FORMATO_IMPRESORA);
       }
     }).catch(() => {});
-
-    api.getIAConfig().then(res => {
-      setIsAiConfigured(res.configurado);
-      if (res.api_key_mascara) {
-        setGeminiApiKey(res.api_key_mascara);
-      }
-    }).catch(() => {});
   }, []);
-
-  const handleSaveAiKey = async () => {
-    if (!geminiApiKey.trim() || geminiApiKey.startsWith('AIza...')) {
-      showToast('Ingresa una clave válida de Gemini');
-      return;
-    }
-    try {
-      setIsSavingAiKey(true);
-      await api.saveIAConfig(geminiApiKey.trim());
-      setIsAiConfigured(true);
-      showToast('API Key de Gemini guardada con éxito');
-    } catch (e) {
-      showToast('Error al guardar la API Key');
-    } finally {
-      setIsSavingAiKey(false);
-    }
-  };
 
   const handleGenerateBackup = async () => {
     try {
@@ -667,68 +638,6 @@ export const SettingsScreen: React.FC = () => {
                 <ShieldCheck className="w-4 h-4" />
                 <span>{isChangingMyPwd ? 'Actualizando...' : 'Actualizar mi clave'}</span>
               </button>
-            </div>
-          </div>
-
-          {/* AI Vision Configuration */}
-          <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-5 shadow-xs">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold text-base text-[var(--ui-text)] flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-[var(--ui-brand-strong)]" />
-                <span>Inteligencia Artificial (Visión Google Gemini)</span>
-              </h2>
-
-              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${
-                isAiConfigured ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]' : 'bg-[var(--ui-warning-bg)] text-[var(--ui-warning-text)] border border-[var(--ui-warning-border)]'
-              }`}>
-                <span className={`w-2 h-2 rounded-full ${isAiConfigured ? 'bg-[var(--ui-brand)]' : 'bg-[var(--ui-warning-solid)]'}`} />
-                <span>{isAiConfigured ? 'Servicio Activo' : 'Pendiente de Clave'}</span>
-              </span>
-            </div>
-
-            <p className="text-xs text-[var(--ui-muted)] mb-4 leading-relaxed">
-              Permite el escaneo automático de facturas con fotos o cámara web en la pantalla de recepción de mercancía.
-            </p>
-
-            <div className="bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-xl p-4 space-y-3 text-xs md:text-sm">
-              <div>
-                <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
-                  Google Gemini API Key
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Key className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5 z-10 pointer-events-none" />
-                    <PasswordInput
-                      wrapperClassName="w-full"
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      placeholder="Pega aquí tu API Key de Gemini (ej: AIzaSy...)"
-                      className="w-full pl-9 pr-3 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg font-mono text-xs text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveAiKey}
-                    disabled={isSavingAiKey}
-                    className="px-4 py-2 bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white font-bold text-xs rounded-lg shadow-xs transition-colors shrink-0"
-                  >
-                    {isSavingAiKey ? 'Guardando...' : 'Guardar Clave'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-[11px] text-[var(--ui-muted)] pt-1">
-                <span>¿No tienes una clave? Es 100% gratuita.</span>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[var(--ui-brand-strong)] font-bold hover:underline inline-flex items-center gap-1"
-                >
-                  <span>Obtener clave gratis en Google AI Studio</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
             </div>
           </div>
 
