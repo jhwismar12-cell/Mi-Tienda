@@ -3,6 +3,7 @@ import { StoreProvider, useStore } from './context/StoreContext';
 import { TopHeader } from './components/TopHeader';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { PosScreen } from './components/pos/PosScreen';
+import { DebtorsScreen } from './components/debtors/DebtorsScreen';
 import { InventoryScreen } from './components/inventory/InventoryScreen';
 import { ProvidersScreen } from './components/providers/ProvidersScreen';
 import { OrderPlannerScreen } from './components/orders/OrderPlannerScreen';
@@ -44,6 +45,7 @@ const MainLayout: React.FC = () => {
         {/* Dynamic Screen View */}
         <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--ui-bg)]">
           {activeScreen === 'pos' && <PosScreen />}
+          {activeScreen === 'debtors' && <DebtorsScreen />}
           {activeScreen === 'inventory' && <InventoryScreen />}
           {activeScreen === 'providers' && <ProvidersScreen />}
           {activeScreen === 'orders' && <OrderPlannerScreen />}

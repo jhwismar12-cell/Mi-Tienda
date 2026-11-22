@@ -16,7 +16,8 @@ import {
   Worker,
   AuthUser,
   ParkedCart,
-  StoreConfig
+  StoreConfig,
+  DebtorAccount
 } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_KARDEX, INITIAL_SHIFT, INITIAL_SALES } from '../data/initialData';
 import { sounds } from '../utils/audio';
@@ -28,6 +29,7 @@ import {
   BackendKardexMovement,
   BackendCashSession,
   BackendPedido,
+  BackendDeuda,
   getStoredAuthUser,
   setAuthSession,
   clearAuthSession,
@@ -136,6 +138,48 @@ export interface StoreContextType {
   setLastCompletedSale: (sale: Sale | null) => void;
   refreshSales: () => Promise<void>;
   voidSale: (saleId: string, reason: string) => Promise<void>;
+
+  // Debtors / Deudores (Fiados)
+  debtors: DebtorAccount[];
+  refreshDebtors: () => Promise<void>;
+  createDebtor: (data: {
+    personName: string;
+    phone?: string;
+    debtType: 'MONTO' | 'PRODUCTOS';
+    amount?: number;
+    items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+    notes?: string;
+    deductStock?: boolean;
+  }) => Promise<DebtorAccount>;
+  addToDebtor: (
+    id: number,
+    data: {
+      extraAmount?: number;
+      items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+      note?: string;
+      deductStock?: boolean;
+    }
+  ) => Promise<DebtorAccount>;
+  addDebtorPayment: (
+    id: number,
+    data: {
+      amount: number;
+      paymentMethod: 'EFECTIVO' | 'TRANSFERENCIA';
+      note?: string;
+      recordInCash?: boolean;
+    }
+  ) => Promise<DebtorAccount>;
+  updateDebtor: (
+    id: number,
+    data: {
+      personName?: string;
+      phone?: string;
+      amount?: number;
+      items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+      notes?: string;
+    }
+  ) => Promise<DebtorAccount>;
+  deleteDebtor: (id: number) => Promise<void>;
 
   // Store Config
   storeConfig: StoreConfig;
@@ -317,6 +361,41 @@ function mapBackendPedido(bp: BackendPedido): PurchaseOrder {
   };
 }
 
+function mapBackendDeuda(bd: BackendDeuda): DebtorAccount {
+  return {
+    id: bd.id_deuda,
+    personName: bd.nombre_persona,
+    phone: bd.telefono || undefined,
+    debtType: bd.tipo_deuda,
+    totalDebt: Number(bd.total_deuda),
+    totalPaid: Number(bd.total_abonado),
+    balanceDue: Number(bd.saldo_pendiente),
+    status: bd.estado,
+    notes: bd.notas || undefined,
+    createdAt: bd.fecha_creacion,
+    updatedAt: bd.fecha_actualizacion,
+    paidAt: bd.fecha_pago || undefined,
+    items: (bd.items || []).map(it => ({
+      id: String(it.id_deuda_producto),
+      productId: it.id_producto,
+      productName: it.nombre_producto,
+      quantity: Number(it.cantidad),
+      unitPrice: Number(it.precio_unitario),
+      subtotal: Number(it.subtotal),
+      recordedAt: it.fecha_registro
+    })),
+    payments: (bd.abonos || []).map(ab => ({
+      id: String(ab.id_abono),
+      amount: Number(ab.monto),
+      paymentMethod: ab.metodo_pago,
+      note: ab.nota || undefined,
+      recordedInCash: Boolean(ab.registrar_en_caja),
+      cashMovementId: ab.id_movimiento_caja,
+      dateTime: ab.fecha_hora
+    }))
+  };
+}
+
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Navigation
   const [activeScreen, setActiveScreen] = useState<ScreenType>('pos');
@@ -353,6 +432,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return local ? JSON.parse(local) : [];
   });
   const [selectedOrderForReception, setSelectedOrderForReception] = useState<PurchaseOrder | null>(null);
+
+  // Debtors / Deudores
+  const [debtors, setDebtors] = useState<DebtorAccount[]>(() => {
+    try {
+      const local = localStorage.getItem('tienda_debtors');
+      return local ? JSON.parse(local) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // POS Cart
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -643,6 +732,168 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, []);
 
+  const refreshDebtors = useCallback(async () => {
+    try {
+      const backendDebtors = await api.getDeudores();
+      if (Array.isArray(backendDebtors)) {
+        const mapped = backendDebtors.map(mapBackendDeuda);
+        setDebtors(mapped);
+        try {
+          localStorage.setItem('tienda_debtors', JSON.stringify(mapped));
+        } catch { /* noop */ }
+      }
+    } catch (e) {
+      console.warn('Usando deudores locales');
+    }
+  }, []);
+
+  const createDebtor = useCallback(async (data: {
+    personName: string;
+    phone?: string;
+    debtType: 'MONTO' | 'PRODUCTOS';
+    amount?: number;
+    items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+    notes?: string;
+    deductStock?: boolean;
+  }): Promise<DebtorAccount> => {
+    const created = await api.crearDeuda({
+      nombre_persona: data.personName.trim(),
+      telefono: data.phone?.trim() || undefined,
+      tipo_deuda: data.debtType,
+      monto: data.amount,
+      items: (data.items || []).map(it => ({
+        id_producto: it.productId ?? null,
+        nombre_producto: it.productName.trim(),
+        cantidad: it.quantity,
+        precio_unitario: it.unitPrice
+      })),
+      notas: data.notes?.trim() || undefined,
+      descontar_stock: Boolean(data.deductStock)
+    });
+    const mapped = mapBackendDeuda(created);
+    setDebtors(prev => {
+      const next = [mapped, ...prev.filter(d => d.id !== mapped.id)];
+      try { localStorage.setItem('tienda_debtors', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    if (data.deductStock) {
+      refreshProducts();
+      refreshKardex();
+    }
+    showToast(`Deudor "${mapped.personName}" registrado ($${mapped.totalDebt.toFixed(2)})`);
+    return mapped;
+  }, [refreshProducts, refreshKardex, showToast]);
+
+  const addToDebtor = useCallback(async (
+    id: number,
+    data: {
+      extraAmount?: number;
+      items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+      note?: string;
+      deductStock?: boolean;
+    }
+  ): Promise<DebtorAccount> => {
+    const updated = await api.agregarADeuda(id, {
+      monto_extra: data.extraAmount,
+      items: (data.items || []).map(it => ({
+        id_producto: it.productId ?? null,
+        nombre_producto: it.productName.trim(),
+        cantidad: it.quantity,
+        precio_unitario: it.unitPrice
+      })),
+      nota: data.note?.trim() || undefined,
+      descontar_stock: Boolean(data.deductStock)
+    });
+    const mapped = mapBackendDeuda(updated);
+    setDebtors(prev => {
+      const next = prev.map(d => (d.id === mapped.id ? mapped : d));
+      try { localStorage.setItem('tienda_debtors', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    if (data.deductStock) {
+      refreshProducts();
+      refreshKardex();
+    }
+    showToast(`Deuda de "${mapped.personName}" actualizada (saldo: $${mapped.balanceDue.toFixed(2)})`);
+    return mapped;
+  }, [refreshProducts, refreshKardex, showToast]);
+
+  const addDebtorPayment = useCallback(async (
+    id: number,
+    data: {
+      amount: number;
+      paymentMethod: 'EFECTIVO' | 'TRANSFERENCIA';
+      note?: string;
+      recordInCash?: boolean;
+    }
+  ): Promise<DebtorAccount> => {
+    const updated = await api.registrarAbonoDeuda(id, {
+      monto: data.amount,
+      metodo_pago: data.paymentMethod,
+      nota: data.note?.trim() || undefined,
+      registrar_en_caja: Boolean(data.recordInCash)
+    });
+    const mapped = mapBackendDeuda(updated);
+    setDebtors(prev => {
+      const next = prev.map(d => (d.id === mapped.id ? mapped : d));
+      try { localStorage.setItem('tienda_debtors', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    if (data.recordInCash) {
+      refreshCashShift();
+    }
+    showToast(
+      mapped.status === 'PAGADO'
+        ? `✓ "${mapped.personName}" pagó toda su deuda ($${data.amount.toFixed(2)})`
+        : `Abono de $${data.amount.toFixed(2)} registrado a "${mapped.personName}"`
+    );
+    return mapped;
+  }, [refreshCashShift, showToast]);
+
+  const updateDebtor = useCallback(async (
+    id: number,
+    data: {
+      personName?: string;
+      phone?: string;
+      amount?: number;
+      items?: Array<{ productId?: number | null; productName: string; quantity: number; unitPrice: number }>;
+      notes?: string;
+    }
+  ): Promise<DebtorAccount> => {
+    const updated = await api.actualizarDeuda(id, {
+      nombre_persona: data.personName?.trim(),
+      telefono: data.phone,
+      monto: data.amount,
+      items: data.items
+        ? data.items.map(it => ({
+            id_producto: it.productId ?? null,
+            nombre_producto: it.productName.trim(),
+            cantidad: it.quantity,
+            precio_unitario: it.unitPrice
+          }))
+        : undefined,
+      notas: data.notes
+    });
+    const mapped = mapBackendDeuda(updated);
+    setDebtors(prev => {
+      const next = prev.map(d => (d.id === mapped.id ? mapped : d));
+      try { localStorage.setItem('tienda_debtors', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    showToast(`Deudor "${mapped.personName}" actualizado`);
+    return mapped;
+  }, [showToast]);
+
+  const deleteDebtor = useCallback(async (id: number) => {
+    await api.eliminarDeuda(id);
+    setDebtors(prev => {
+      const next = prev.filter(d => d.id !== id);
+      try { localStorage.setItem('tienda_debtors', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    showToast('Registro de deudor eliminado');
+  }, [showToast]);
+
   // Init fetch
   useEffect(() => {
     setOnUnauthorized(() => {
@@ -659,8 +910,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     refreshPurchaseOrders();
     refreshWorkers();
     refreshSales();
+    refreshDebtors();
     refreshStoreConfig();
-  }, [currentUser, refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales, refreshStoreConfig]);
+  }, [currentUser, refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales, refreshDebtors, refreshStoreConfig]);
 
   useEffect(() => {
     try {
@@ -684,10 +936,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       refreshCashShift(),
       refreshPurchaseOrders(),
       refreshWorkers(),
-      refreshSales()
+      refreshSales(),
+      refreshDebtors()
     ]);
     return res.usuario;
-  }, [refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales]);
+  }, [refreshProducts, refreshKardex, refreshCashShift, refreshPurchaseOrders, refreshWorkers, refreshSales, refreshDebtors]);
 
   const logoutUser = useCallback(() => {
     clearAuthSession();
@@ -1791,6 +2044,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setActiveWorker,
         refreshSales,
         voidSale,
+        debtors,
+        refreshDebtors,
+        createDebtor,
+        addToDebtor,
+        addDebtorPayment,
+        updateDebtor,
+        deleteDebtor,
         storeConfig,
         refreshStoreConfig,
         toastMessage,

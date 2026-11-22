@@ -12,6 +12,7 @@ import {
   Receipt,
   Store,
   CalendarCheck,
+  Users,
   X,
   Menu
 } from 'lucide-react';
@@ -25,6 +26,7 @@ interface SidebarProps {
 
 const NAV_ITEMS_DEF: { id: ScreenType; label: string; shortLabel: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'pos', label: 'Punto de Venta', shortLabel: 'Venta', icon: ShoppingBag },
+  { id: 'debtors', label: 'Deudores', shortLabel: 'Deudores', icon: Users },
   { id: 'inventory', label: 'Inventario', shortLabel: 'Inventario', icon: Package },
   { id: 'providers', label: 'Distribuidores', shortLabel: 'Distribuidores', icon: Building2 },
   { id: 'orders', label: 'Agenda de Pedidos', shortLabel: 'Pedidos', icon: CalendarCheck },
@@ -35,13 +37,19 @@ const NAV_ITEMS_DEF: { id: ScreenType; label: string; shortLabel: string; icon: 
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen = false, onCloseMobile }) => {
-  const { activeScreen, setActiveScreen, closeShiftAndGenerateReport, purchaseOrders, showToast } = useStore();
+  const { activeScreen, setActiveScreen, closeShiftAndGenerateReport, purchaseOrders, debtors, showToast } = useStore();
 
   const pendingOrdersCount = purchaseOrders.filter(o => o.status === 'PENDIENTE').length;
+  const pendingDebtorsCount = debtors.filter(d => d.status === 'PENDIENTE').length;
 
   const navItems = NAV_ITEMS_DEF.map(item => ({
     ...item,
-    badge: item.id === 'orders' ? pendingOrdersCount : undefined
+    badge:
+      item.id === 'orders'
+        ? pendingOrdersCount
+        : item.id === 'debtors'
+        ? pendingDebtorsCount
+        : undefined
   }));
 
   const handleSelectScreen = (id: ScreenType) => {

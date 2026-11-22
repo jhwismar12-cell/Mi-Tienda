@@ -577,6 +577,81 @@ export const api = {
   eliminarTrabajador: (idUsuario: number) =>
     request<{ success: boolean; message: string }>(`/trabajadores/${idUsuario}`, {
       method: 'DELETE'
+    }),
+
+  // --- Deudores / Fiados ---
+  getDeudores: () => request<BackendDeuda[]>('/deudores'),
+  crearDeuda: (data: {
+    nombre_persona: string;
+    telefono?: string;
+    tipo_deuda: 'MONTO' | 'PRODUCTOS';
+    monto?: number;
+    items?: Array<{
+      id_producto?: number | null;
+      nombre_producto: string;
+      cantidad: number;
+      precio_unitario: number;
+    }>;
+    notas?: string;
+    descontar_stock?: boolean;
+  }) =>
+    request<BackendDeuda>('/deudores', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  agregarADeuda: (
+    idDeuda: number,
+    data: {
+      monto_extra?: number;
+      items?: Array<{
+        id_producto?: number | null;
+        nombre_producto: string;
+        cantidad: number;
+        precio_unitario: number;
+      }>;
+      nota?: string;
+      descontar_stock?: boolean;
+    }
+  ) =>
+    request<BackendDeuda>(`/deudores/${idDeuda}/agregar`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  registrarAbonoDeuda: (
+    idDeuda: number,
+    data: {
+      monto: number;
+      metodo_pago: 'EFECTIVO' | 'TRANSFERENCIA';
+      nota?: string;
+      registrar_en_caja?: boolean;
+    }
+  ) =>
+    request<BackendDeuda>(`/deudores/${idDeuda}/abonos`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  actualizarDeuda: (
+    idDeuda: number,
+    data: {
+      nombre_persona?: string;
+      telefono?: string;
+      monto?: number;
+      items?: Array<{
+        id_producto?: number | null;
+        nombre_producto: string;
+        cantidad: number;
+        precio_unitario: number;
+      }>;
+      notas?: string;
+    }
+  ) =>
+    request<BackendDeuda>(`/deudores/${idDeuda}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    }),
+  eliminarDeuda: (idDeuda: number) =>
+    request<{ success: boolean; message: string }>(`/deudores/${idDeuda}`, {
+      method: 'DELETE'
     })
 };
 
@@ -637,4 +712,41 @@ export interface AIProcessedInvoice {
   total: number;
   items: AIProcessedItem[];
   total_items: number;
+}
+
+export interface BackendDeudaProducto {
+  id_deuda_producto: number;
+  id_producto: number | null;
+  nombre_producto: string;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  fecha_registro: string;
+}
+
+export interface BackendDeudaAbono {
+  id_abono: number;
+  monto: number;
+  metodo_pago: 'EFECTIVO' | 'TRANSFERENCIA';
+  nota: string | null;
+  registrar_en_caja: boolean;
+  id_movimiento_caja: number | null;
+  fecha_hora: string;
+}
+
+export interface BackendDeuda {
+  id_deuda: number;
+  nombre_persona: string;
+  telefono: string | null;
+  tipo_deuda: 'MONTO' | 'PRODUCTOS';
+  total_deuda: number;
+  total_abonado: number;
+  saldo_pendiente: number;
+  estado: 'PENDIENTE' | 'PAGADO';
+  notas: string | null;
+  fecha_creacion: string;
+  fecha_actualizacion: string;
+  fecha_pago: string | null;
+  items: BackendDeudaProducto[];
+  abonos: BackendDeudaAbono[];
 }

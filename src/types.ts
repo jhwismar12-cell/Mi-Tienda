@@ -1,4 +1,4 @@
-export type ScreenType = 'pos' | 'inventory' | 'providers' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
+export type ScreenType = 'pos' | 'debtors' | 'inventory' | 'providers' | 'orders' | 'reception' | 'kardex' | 'reports' | 'settings';
 
 export const STORE_CATEGORIES = [
   'Abarrotes',
@@ -203,5 +203,45 @@ export interface AuthUser {
   id_role: number;
   role_name: string;
   debe_cambiar_clave?: boolean;
+}
+
+export type DebtorType = 'MONTO' | 'PRODUCTOS';
+export type DebtorStatus = 'PENDIENTE' | 'PAGADO';
+
+export interface DebtorItem {
+  id: string;
+  productId?: number | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  recordedAt: string;
+}
+
+export interface DebtorPayment {
+  id: string;
+  amount: number;
+  paymentMethod: 'EFECTIVO' | 'TRANSFERENCIA';
+  note?: string;
+  recordedInCash: boolean;
+  cashMovementId?: number | null;
+  dateTime: string;
+}
+
+export interface DebtorAccount {
+  id: number;
+  personName: string;
+  phone?: string;
+  debtType: DebtorType;
+  totalDebt: number;
+  totalPaid: number;
+  balanceDue: number;
+  status: DebtorStatus;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  paidAt?: string;
+  items: DebtorItem[];
+  payments: DebtorPayment[];
 }
 

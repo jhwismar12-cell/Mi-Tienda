@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from backend.database import get_db, DB_PATH, PROJECT_ROOT, get_backup_dir
+from backend.database import get_db, DB_PATH, PROJECT_ROOT, get_backup_dir, ensure_deudores_schema
 from backend.auth import hash_password, unusable_password, validate_new_password
 from backend.models import (
     ProductoOut, ProductoCreate, ProductoUpdate, ProductoRapidoRequest,
@@ -17,7 +17,10 @@ from backend.models import (
     SesionCajaOut, CashMovementItem, DashboardKPIsOut, HourlySalesItem, TopProductSalesItem,
     BackupResponse,
     PedidoCreateRequest, PedidoUpdateRequest, PedidoOut, PedidoDetalleOut,
-    TrabajadorOut, TrabajadorCreate
+    TrabajadorOut, TrabajadorCreate,
+    DeudaProductoInput, DeudaCreateRequest, DeudaUpdateRequest,
+    DeudaAgregarRequest, DeudaAbonoRequest,
+    DeudaProductoOut, DeudaAbonoOut, DeudaOut
 )
 
 
@@ -1963,5 +1966,394 @@ def eliminar_trabajador(id_usuario: int) -> bool:
         # Desactivar y anular la clave: pierde el acceso de inmediato.
         cursor.execute("UPDATE USUARIOS SET Activo = 0, PasswordHash = ? WHERE IDUsuario = ?", (unusable_password(), id_usuario))
         return cursor.rowcount > 0
+
+
+# --- Debtors / Deudores (Fiados) Services ---
+def _map_deuda_row(cursor: sqlite3.Cursor, row: sqlite3.Row) -> DeudaOut:
+    did = int(row["IDDeuda"])
+    item_rows = cursor.execute(
+        "SELECT * FROM DEUDAS_PRODUCTOS WHERE IDDeuda = ? ORDER BY IDDeudaProducto ASC",
+        (did,),
+    ).fetchall()
+    abono_rows = cursor.execute(
+        "SELECT * FROM DEUDAS_ABONOS WHERE IDDeuda = ? ORDER BY FechaHora DESC, IDAbono DESC",
+        (did,),
+    ).fetchall()
+
+    return DeudaOut(
+        id_deuda=did,
+        nombre_persona=row["NombrePersona"],
+        telefono=row["Telefono"],
+        tipo_deuda=row["TipoDeuda"],
+        total_deuda=round(float(row["TotalDeuda"]), 2),
+        total_abonado=round(float(row["TotalAbonado"]), 2),
+        saldo_pendiente=round(float(row["SaldoPendiente"]), 2),
+        estado=row["Estado"],
+        notas=row["Notas"],
+        fecha_creacion=str(row["FechaCreacion"]),
+        fecha_actualizacion=str(row["FechaActualizacion"]),
+        fecha_pago=str(row["FechaPago"]) if row["FechaPago"] else None,
+        items=[
+            DeudaProductoOut(
+                id_deuda_producto=int(i["IDDeudaProducto"]),
+                id_producto=int(i["IDProducto"]) if i["IDProducto"] is not None else None,
+                nombre_producto=i["NombreProducto"],
+                cantidad=float(i["Cantidad"]),
+                precio_unitario=float(i["PrecioUnitario"]),
+                subtotal=round(float(i["Subtotal"]), 2),
+                fecha_registro=str(i["FechaRegistro"]),
+            )
+            for i in item_rows
+        ],
+        abonos=[
+            DeudaAbonoOut(
+                id_abono=int(a["IDAbono"]),
+                monto=round(float(a["Monto"]), 2),
+                metodo_pago=a["MetodoPago"],
+                nota=a["Nota"],
+                registrar_en_caja=bool(a["RegistrarEnCaja"]),
+                id_movimiento_caja=int(a["IDMovimientoCaja"]) if a["IDMovimientoCaja"] is not None else None,
+                fecha_hora=str(a["FechaHora"]),
+            )
+            for a in abono_rows
+        ],
+    )
+
+
+def _descontar_stock_items_deuda(
+    cursor: sqlite3.Cursor,
+    items: List[DeudaProductoInput],
+    nombre_persona: str,
+    id_deuda: int,
+    id_usuario: int,
+    ahora: str,
+) -> None:
+    for it in items:
+        if it.id_producto is None:
+            continue
+        prod = cursor.execute(
+            "SELECT IDProducto, StockActual FROM PRODUCTOS WHERE IDProducto = ?",
+            (it.id_producto,),
+        ).fetchone()
+        if not prod:
+            continue
+        stock_ant = float(prod["StockActual"])
+        cant = float(it.cantidad)
+        stock_post = max(0.0, round(stock_ant - cant, 3))
+        cursor.execute(
+            "UPDATE PRODUCTOS SET StockActual = ?, FechaModificacion = ? WHERE IDProducto = ?",
+            (stock_post, ahora, it.id_producto),
+        )
+        cursor.execute(
+            """INSERT INTO MOVIMIENTOS_INVENTARIO (
+                FechaHora, IDProducto, TipoMovimiento, Cantidad, StockAnterior, StockPosterior,
+                ReferenciaID, IDUsuario, Observacion
+            ) VALUES (?, ?, 'AJUSTE_NEGATIVO', ?, ?, ?, ?, ?, ?)""",
+            (
+                ahora,
+                it.id_producto,
+                -cant,
+                stock_ant,
+                stock_post,
+                f"FIADO-{id_deuda}",
+                id_usuario,
+                f"Fiado a {nombre_persona}",
+            ),
+        )
+
+
+def listar_deudores() -> List[DeudaOut]:
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            """SELECT * FROM DEUDAS
+               ORDER BY CASE WHEN Estado = 'PENDIENTE' THEN 0 ELSE 1 END,
+                        FechaActualizacion DESC,
+                        IDDeuda DESC"""
+        ).fetchall()
+        return [_map_deuda_row(cursor, r) for r in rows]
+
+
+def crear_deuda(data: DeudaCreateRequest) -> DeudaOut:
+    nombre = data.nombre_persona.strip()
+    if not nombre:
+        raise ValueError("El nombre de la persona es obligatorio.")
+    telefono = (data.telefono or "").strip() or None
+    notas = (data.notas or "").strip() or None
+    uid = int(data.id_usuario or 1)
+    ahora = now_local_str()
+
+    prepared_items: List[dict] = []
+    if data.tipo_deuda == "PRODUCTOS":
+        if not data.items:
+            raise ValueError("Agrega al menos un producto para registrar una deuda con productos.")
+        total = 0.0
+        for it in data.items:
+            p_name = it.nombre_producto.strip()
+            if not p_name:
+                raise ValueError("Todos los productos deben tener nombre.")
+            cant = float(it.cantidad)
+            precio = float(it.precio_unitario)
+            sub = round(cant * precio, 2)
+            total = round(total + sub, 2)
+            prepared_items.append(
+                {
+                    "id_producto": it.id_producto,
+                    "nombre_producto": p_name,
+                    "cantidad": cant,
+                    "precio_unitario": precio,
+                    "subtotal": sub,
+                }
+            )
+        if total <= 0:
+            raise ValueError("El total a pagar debe ser mayor a $0.00.")
+    else:
+        if data.monto is None or float(data.monto) <= 0:
+            raise ValueError("La cantidad de dinero adeudada debe ser mayor a $0.00.")
+        total = round(float(data.monto), 2)
+
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO DEUDAS (
+                NombrePersona, Telefono, TipoDeuda, TotalDeuda, TotalAbonado, SaldoPendiente,
+                Estado, Notas, IDUsuario, FechaCreacion, FechaActualizacion
+            ) VALUES (?, ?, ?, ?, 0.00, ?, 'PENDIENTE', ?, ?, ?, ?)""",
+            (nombre, telefono, data.tipo_deuda, total, total, notas, uid, ahora, ahora),
+        )
+        did = cursor.lastrowid
+        for it in prepared_items:
+            cursor.execute(
+                """INSERT INTO DEUDAS_PRODUCTOS (
+                    IDDeuda, IDProducto, NombreProducto, Cantidad, PrecioUnitario, Subtotal, FechaRegistro
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    did,
+                    it["id_producto"],
+                    it["nombre_producto"],
+                    it["cantidad"],
+                    it["precio_unitario"],
+                    it["subtotal"],
+                    ahora,
+                ),
+            )
+        if data.tipo_deuda == "PRODUCTOS" and data.descontar_stock and data.items:
+            _descontar_stock_items_deuda(cursor, data.items, nombre, did, uid, ahora)
+
+        row = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (did,)).fetchone()
+        return _map_deuda_row(cursor, row)
+
+
+def agregar_a_deuda(id_deuda: int, data: DeudaAgregarRequest) -> DeudaOut:
+    uid = int(data.id_usuario or 1)
+    ahora = now_local_str()
+    has_extra_money = data.monto_extra is not None and float(data.monto_extra) > 0
+    has_items = len(data.items) > 0
+    if not has_extra_money and not has_items:
+        raise ValueError("Indica un monto adicional o al menos un producto para sumar a la deuda.")
+
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        row = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        if not row:
+            raise LookupError("Deudor no encontrado.")
+
+        added_total = round(float(data.monto_extra), 2) if has_extra_money else 0.0
+        for it in data.items:
+            p_name = it.nombre_producto.strip()
+            if not p_name:
+                raise ValueError("Todos los productos deben tener nombre.")
+            cant = float(it.cantidad)
+            precio = float(it.precio_unitario)
+            sub = round(cant * precio, 2)
+            added_total = round(added_total + sub, 2)
+            cursor.execute(
+                """INSERT INTO DEUDAS_PRODUCTOS (
+                    IDDeuda, IDProducto, NombreProducto, Cantidad, PrecioUnitario, Subtotal, FechaRegistro
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (id_deuda, it.id_producto, p_name, cant, precio, sub, ahora),
+            )
+
+        if added_total <= 0:
+            raise ValueError("El monto a sumar debe ser mayor a $0.00.")
+
+        if has_items and data.descontar_stock:
+            _descontar_stock_items_deuda(cursor, data.items, row["NombrePersona"], id_deuda, uid, ahora)
+
+        new_total = round(float(row["TotalDeuda"]) + added_total, 2)
+        abonado = round(float(row["TotalAbonado"]), 2)
+        new_saldo = max(0.0, round(new_total - abonado, 2))
+        new_estado = "PAGADO" if new_saldo <= 0.005 else "PENDIENTE"
+        new_tipo = "PRODUCTOS" if (row["TipoDeuda"] == "PRODUCTOS" or has_items) else "MONTO"
+
+        next_notas = row["Notas"]
+        if data.nota and data.nota.strip():
+            clean_note = data.nota.strip()
+            next_notas = f"{next_notas} | {clean_note}" if next_notas else clean_note
+
+        cursor.execute(
+            """UPDATE DEUDAS
+               SET TipoDeuda = ?, TotalDeuda = ?, SaldoPendiente = ?, Estado = ?,
+                   Notas = ?, FechaActualizacion = ?, FechaPago = CASE WHEN ? = 'PENDIENTE' THEN NULL ELSE FechaPago END
+               WHERE IDDeuda = ?""",
+            (new_tipo, new_total, new_saldo, new_estado, next_notas, ahora, new_estado, id_deuda),
+        )
+        updated = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        return _map_deuda_row(cursor, updated)
+
+
+def registrar_abono_deuda(id_deuda: int, data: DeudaAbonoRequest) -> DeudaOut:
+    uid = int(data.id_usuario or 1)
+    ahora = now_local_str()
+    monto = round(float(data.monto), 2)
+    if monto <= 0:
+        raise ValueError("El monto del abono debe ser mayor a $0.00.")
+
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        row = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        if not row:
+            raise LookupError("Deudor no encontrado.")
+
+        saldo_actual = round(float(row["SaldoPendiente"]), 2)
+        if saldo_actual <= 0.005:
+            raise ValueError("Esta deuda ya está completamente pagada.")
+        if monto > saldo_actual + 0.01:
+            raise ValueError(f"El abono (${monto:.2f}) supera el saldo pendiente (${saldo_actual:.2f}).")
+        if monto > saldo_actual:
+            monto = saldo_actual
+
+        mov_caja_id = None
+        recorded_in_cash = 0
+        if data.registrar_en_caja:
+            active_shift = cursor.execute(
+                "SELECT IDSesionCaja FROM SESIONES_CAJA WHERE Estado = 'ABIERTA' ORDER BY IDSesionCaja DESC LIMIT 1"
+            ).fetchone()
+            if active_shift:
+                sid = int(active_shift["IDSesionCaja"])
+                nota_txt = f" ({data.nota.strip()})" if data.nota and data.nota.strip() else ""
+                desc_caja = f"Pago deuda: {row['NombrePersona']}{nota_txt}"
+                cursor.execute(
+                    "INSERT INTO MOVIMIENTOS_CAJA (IDSesionCaja, IDUsuario, Tipo, Monto, Descripcion) VALUES (?, ?, 'INGRESO', ?, ?)",
+                    (sid, uid, monto, desc_caja),
+                )
+                mov_caja_id = cursor.lastrowid
+                cursor.execute(
+                    "UPDATE SESIONES_CAJA SET TotalEsperado = TotalEsperado + ? WHERE IDSesionCaja = ?",
+                    (monto, sid),
+                )
+                recorded_in_cash = 1
+
+        cursor.execute(
+            """INSERT INTO DEUDAS_ABONOS (
+                IDDeuda, Monto, MetodoPago, Nota, RegistrarEnCaja, IDMovimientoCaja, IDUsuario, FechaHora
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                id_deuda,
+                monto,
+                data.metodo_pago,
+                (data.nota or "").strip() or None,
+                recorded_in_cash,
+                mov_caja_id,
+                uid,
+                ahora,
+            ),
+        )
+
+        new_abonado = round(float(row["TotalAbonado"]) + monto, 2)
+        new_saldo = max(0.0, round(float(row["TotalDeuda"]) - new_abonado, 2))
+        is_paid = new_saldo <= 0.005
+        if is_paid:
+            new_saldo = 0.0
+        new_estado = "PAGADO" if is_paid else "PENDIENTE"
+        fecha_pago = ahora if is_paid else None
+
+        cursor.execute(
+            """UPDATE DEUDAS
+               SET TotalAbonado = ?, SaldoPendiente = ?, Estado = ?, FechaActualizacion = ?, FechaPago = ?
+               WHERE IDDeuda = ?""",
+            (new_abonado, new_saldo, new_estado, ahora, fecha_pago, id_deuda),
+        )
+        updated = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        return _map_deuda_row(cursor, updated)
+
+
+def actualizar_deuda(id_deuda: int, data: DeudaUpdateRequest) -> DeudaOut:
+    ahora = now_local_str()
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        row = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        if not row:
+            raise LookupError("Deudor no encontrado.")
+
+        nombre = data.nombre_persona.strip() if data.nombre_persona is not None else row["NombrePersona"]
+        if not nombre:
+            raise ValueError("El nombre de la persona es obligatorio.")
+        telefono = (data.telefono.strip() or None) if data.telefono is not None else row["Telefono"]
+        notas = (data.notas.strip() or None) if data.notas is not None else row["Notas"]
+
+        total = round(float(row["TotalDeuda"]), 2)
+        tipo = row["TipoDeuda"]
+
+        if data.items is not None:
+            if not data.items:
+                raise ValueError("La lista de productos no puede quedar vacía.")
+            cursor.execute("DELETE FROM DEUDAS_PRODUCTOS WHERE IDDeuda = ?", (id_deuda,))
+            total = 0.0
+            for it in data.items:
+                p_name = it.nombre_producto.strip()
+                if not p_name:
+                    raise ValueError("Todos los productos deben tener nombre.")
+                cant = float(it.cantidad)
+                precio = float(it.precio_unitario)
+                sub = round(cant * precio, 2)
+                total = round(total + sub, 2)
+                cursor.execute(
+                    """INSERT INTO DEUDAS_PRODUCTOS (
+                        IDDeuda, IDProducto, NombreProducto, Cantidad, PrecioUnitario, Subtotal, FechaRegistro
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (id_deuda, it.id_producto, p_name, cant, precio, sub, ahora),
+                )
+            tipo = "PRODUCTOS"
+        elif data.monto is not None:
+            if float(data.monto) <= 0:
+                raise ValueError("El monto total debe ser mayor a $0.00.")
+            total = round(float(data.monto), 2)
+
+        abonado = round(float(row["TotalAbonado"]), 2)
+        saldo = max(0.0, round(total - abonado, 2))
+        is_paid = saldo <= 0.005
+        if is_paid:
+            saldo = 0.0
+        estado = "PAGADO" if is_paid else "PENDIENTE"
+        fecha_pago = (row["FechaPago"] or ahora) if is_paid else None
+
+        cursor.execute(
+            """UPDATE DEUDAS
+               SET NombrePersona = ?, Telefono = ?, TipoDeuda = ?, TotalDeuda = ?,
+                   SaldoPendiente = ?, Estado = ?, Notas = ?, FechaActualizacion = ?, FechaPago = ?
+               WHERE IDDeuda = ?""",
+            (nombre, telefono, tipo, total, saldo, estado, notas, ahora, fecha_pago, id_deuda),
+        )
+        updated = cursor.execute("SELECT * FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,)).fetchone()
+        return _map_deuda_row(cursor, updated)
+
+
+def eliminar_deuda(id_deuda: int) -> bool:
+    with get_db() as conn:
+        ensure_deudores_schema(conn)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM DEUDAS WHERE IDDeuda = ?", (id_deuda,))
+        return cursor.rowcount > 0
+
 
 

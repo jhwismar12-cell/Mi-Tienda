@@ -1138,6 +1138,95 @@ class TestTiendaBackend(unittest.TestCase):
         self.assertIn("precio_venta_unitario", latest)
         self.assertAlmostEqual(float(latest["precio_venta_unitario"]), 2.75, places=2)
 
+    def test_32_deudores_solo_monto_y_con_productos_abonos_caja(self):
+        # Ensure active cash shift so we can verify cash drawer sync on debt payment
+        if not self.client.get("/api/caja/activa").json():
+            open_res = self.client.post("/api/caja/abrir", json={"monto_inicial": 20.0, "id_usuario": 1})
+            self.assertEqual(open_res.status_code, 200)
+        shift_before = self.client.get("/api/caja/activa").json()
+        expected_before = float(shift_before["total_esperado"])
+
+        # 1. Option 1: Solo nombre de persona y cantidad de dinero
+        r1 = self.client.post("/api/deudores", json={
+            "nombre_persona": "María López",
+            "tipo_deuda": "MONTO",
+            "monto": 8.50,
+            "notas": "Fiado de ayer"
+        })
+        self.assertEqual(r1.status_code, 200)
+        d1 = r1.json()
+        self.assertEqual(d1["nombre_persona"], "María López")
+        self.assertEqual(d1["tipo_deuda"], "MONTO")
+        self.assertAlmostEqual(d1["total_deuda"], 8.50, places=2)
+        self.assertAlmostEqual(d1["saldo_pendiente"], 8.50, places=2)
+        self.assertEqual(d1["estado"], "PENDIENTE")
+
+        # 2. Option 2: Nombre de persona + productos que debe + total a pagar
+        prod = self.client.get("/api/productos/buscar?query=BEB-COC-3000").json()["producto"]
+        pid = prod["id_producto"]
+        stock_before = float(prod["stock_actual"])
+
+        r2 = self.client.post("/api/deudores", json={
+            "nombre_persona": "Don Carlos",
+            "telefono": "0991234567",
+            "tipo_deuda": "PRODUCTOS",
+            "descontar_stock": True,
+            "items": [
+                {"id_producto": pid, "nombre_producto": prod["nombre"], "cantidad": 2, "precio_unitario": 2.75},
+                {"id_producto": None, "nombre_producto": "Pan de casa", "cantidad": 4, "precio_unitario": 0.25}
+            ]
+        })
+        self.assertEqual(r2.status_code, 200)
+        d2 = r2.json()
+        self.assertEqual(d2["tipo_deuda"], "PRODUCTOS")
+        self.assertEqual(len(d2["items"]), 2)
+        self.assertAlmostEqual(d2["total_deuda"], 6.50, places=2)  # 5.50 + 1.00
+        self.assertAlmostEqual(d2["saldo_pendiente"], 6.50, places=2)
+
+        # Verify optional stock deduction worked
+        prod_after = self.client.get("/api/productos/buscar?query=BEB-COC-3000").json()["producto"]
+        self.assertAlmostEqual(float(prod_after["stock_actual"]), max(0.0, stock_before - 2.0), places=2)
+
+        # 3. Partial payment on d1 recorded in cash -> balances caja!
+        pay1 = self.client.post(f"/api/deudores/{d1['id_deuda']}/abonos", json={
+            "monto": 3.50,
+            "metodo_pago": "EFECTIVO",
+            "nota": "Primer abono",
+            "registrar_en_caja": True
+        })
+        self.assertEqual(pay1.status_code, 200)
+        d1_after = pay1.json()
+        self.assertAlmostEqual(d1_after["total_abonado"], 3.50, places=2)
+        self.assertAlmostEqual(d1_after["saldo_pendiente"], 5.00, places=2)
+        self.assertEqual(d1_after["estado"], "PENDIENTE")
+
+        shift_after = self.client.get("/api/caja/activa").json()
+        self.assertAlmostEqual(float(shift_after["total_esperado"]), expected_before + 3.50, places=2)
+
+        # 4. Pay remainder -> becomes PAGADO
+        pay2 = self.client.post(f"/api/deudores/{d1['id_deuda']}/abonos", json={
+            "monto": 5.00,
+            "metodo_pago": "TRANSFERENCIA",
+            "registrar_en_caja": False
+        })
+        self.assertEqual(pay2.status_code, 200)
+        self.assertEqual(pay2.json()["estado"], "PAGADO")
+        self.assertAlmostEqual(pay2.json()["saldo_pendiente"], 0.0, places=2)
+
+        # 5. Add more products to d2 + list + edit + delete
+        add_res = self.client.post(f"/api/deudores/{d2['id_deuda']}/agregar", json={
+            "items": [{"nombre_producto": "Leche", "cantidad": 1, "precio_unitario": 1.10}]
+        })
+        self.assertEqual(add_res.status_code, 200)
+        self.assertAlmostEqual(add_res.json()["total_deuda"], 7.60, places=2)
+        self.assertEqual(len(add_res.json()["items"]), 3)
+
+        all_debtors = self.client.get("/api/deudores").json()
+        self.assertGreaterEqual(len(all_debtors), 2)
+
+        del_res = self.client.delete(f"/api/deudores/{d1['id_deuda']}")
+        self.assertEqual(del_res.status_code, 200)
+
 if __name__ == "__main__":
     unittest.main()
 

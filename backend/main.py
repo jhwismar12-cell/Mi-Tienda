@@ -26,7 +26,8 @@ from backend.models import (
     CajaAbrirRequest, CajaCerrarRequest, CajaMovimientoRequest,
     SesionCajaOut, DashboardKPIsOut, BackupResponse,
     PedidoCreateRequest, PedidoUpdateRequest, PedidoOut,
-    TrabajadorOut, TrabajadorCreate
+    TrabajadorOut, TrabajadorCreate,
+    DeudaCreateRequest, DeudaUpdateRequest, DeudaAgregarRequest, DeudaAbonoRequest, DeudaOut
 )
 from backend import services
 from backend.ai_vision import process_invoice_with_gemini, parse_sri_invoice_xml, get_api_key, set_api_key
@@ -918,6 +919,82 @@ def eliminar_trabajador_endpoint(id_usuario: int, _admin: UserInfo = Depends(req
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- 11B. Deudores / Cuentas por Cobrar Endpoints ---
+@app.get("/api/deudores", response_model=List[DeudaOut], tags=["Deudores"])
+def listar_deudores_endpoint():
+    return services.listar_deudores()
+
+
+@app.post("/api/deudores", response_model=DeudaOut, tags=["Deudores"])
+def crear_deuda_endpoint(data: DeudaCreateRequest, current_user: UserInfo = Depends(get_current_user)):
+    try:
+        data.id_usuario = current_user.id_usuario
+        return services.crear_deuda(data)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/deudores/{id_deuda}/agregar", response_model=DeudaOut, tags=["Deudores"])
+def agregar_a_deuda_endpoint(
+    id_deuda: int,
+    data: DeudaAgregarRequest,
+    current_user: UserInfo = Depends(get_current_user),
+):
+    try:
+        data.id_usuario = current_user.id_usuario
+        return services.agregar_a_deuda(id_deuda, data)
+    except LookupError as le:
+        raise HTTPException(status_code=404, detail=str(le))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/deudores/{id_deuda}/abonos", response_model=DeudaOut, tags=["Deudores"])
+def registrar_abono_deuda_endpoint(
+    id_deuda: int,
+    data: DeudaAbonoRequest,
+    current_user: UserInfo = Depends(get_current_user),
+):
+    try:
+        data.id_usuario = current_user.id_usuario
+        return services.registrar_abono_deuda(id_deuda, data)
+    except LookupError as le:
+        raise HTTPException(status_code=404, detail=str(le))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/deudores/{id_deuda}", response_model=DeudaOut, tags=["Deudores"])
+def actualizar_deuda_endpoint(id_deuda: int, data: DeudaUpdateRequest):
+    try:
+        return services.actualizar_deuda(id_deuda, data)
+    except LookupError as le:
+        raise HTTPException(status_code=404, detail=str(le))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/deudores/{id_deuda}", tags=["Deudores"])
+def eliminar_deuda_endpoint(id_deuda: int):
+    try:
+        deleted = services.eliminar_deuda(id_deuda)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Deudor no encontrado.")
+        return {"success": True, "message": "Registro de deudor eliminado correctamente."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # --- 12. Serve Frontend Static SPA from dist/ ---
 DIST_DIR = os.path.join(PROJECT_ROOT, "dist")

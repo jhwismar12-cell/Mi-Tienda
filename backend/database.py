@@ -287,6 +287,49 @@ CREATE TABLE IF NOT EXISTS PEDIDOS_DETALLE (
     FOREIGN KEY (IDProducto) REFERENCES PRODUCTOS(IDProducto) ON DELETE RESTRICT
 );
 
+-- 12B. DEUDORES / CUENTAS POR COBRAR (Fiados por monto o con productos)
+CREATE TABLE IF NOT EXISTS DEUDAS (
+    IDDeuda INTEGER PRIMARY KEY AUTOINCREMENT,
+    NombrePersona VARCHAR(150) NOT NULL,
+    Telefono VARCHAR(40),
+    TipoDeuda VARCHAR(20) NOT NULL CHECK (TipoDeuda IN ('MONTO', 'PRODUCTOS')),
+    TotalDeuda DECIMAL(12, 2) NOT NULL CHECK (TotalDeuda >= 0),
+    TotalAbonado DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (TotalAbonado >= 0),
+    SaldoPendiente DECIMAL(12, 2) NOT NULL CHECK (SaldoPendiente >= 0),
+    Estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE' CHECK (Estado IN ('PENDIENTE', 'PAGADO')),
+    Notas TEXT,
+    IDUsuario INTEGER NOT NULL DEFAULT 1,
+    FechaCreacion DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FechaActualizacion DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FechaPago DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS DEUDAS_PRODUCTOS (
+    IDDeudaProducto INTEGER PRIMARY KEY AUTOINCREMENT,
+    IDDeuda INTEGER NOT NULL,
+    IDProducto INTEGER,
+    NombreProducto VARCHAR(150) NOT NULL,
+    Cantidad DECIMAL(12, 3) NOT NULL CHECK (Cantidad > 0),
+    PrecioUnitario DECIMAL(12, 4) NOT NULL CHECK (PrecioUnitario >= 0),
+    Subtotal DECIMAL(12, 2) NOT NULL CHECK (Subtotal >= 0),
+    FechaRegistro DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (IDDeuda) REFERENCES DEUDAS(IDDeuda) ON DELETE CASCADE,
+    FOREIGN KEY (IDProducto) REFERENCES PRODUCTOS(IDProducto) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS DEUDAS_ABONOS (
+    IDAbono INTEGER PRIMARY KEY AUTOINCREMENT,
+    IDDeuda INTEGER NOT NULL,
+    Monto DECIMAL(12, 2) NOT NULL CHECK (Monto > 0),
+    MetodoPago VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO' CHECK (MetodoPago IN ('EFECTIVO', 'TRANSFERENCIA')),
+    Nota TEXT,
+    RegistrarEnCaja INTEGER NOT NULL DEFAULT 0,
+    IDMovimientoCaja INTEGER,
+    IDUsuario INTEGER NOT NULL DEFAULT 1,
+    FechaHora DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (IDDeuda) REFERENCES DEUDAS(IDDeuda) ON DELETE CASCADE
+);
+
 -- 13. INDICES DE VELOCIDAD
 CREATE INDEX IF NOT EXISTS idx_codigos_barras ON PRODUCTO_CODIGOS_BARRAS(CodigoBarras);
 CREATE INDEX IF NOT EXISTS idx_pedidos_estado ON PEDIDOS(Estado);
@@ -294,9 +337,63 @@ CREATE INDEX IF NOT EXISTS idx_productos_cod_interno ON PRODUCTOS(CodigoInterno)
 CREATE INDEX IF NOT EXISTS idx_productos_nombre ON PRODUCTOS(Nombre);
 CREATE INDEX IF NOT EXISTS idx_movimientos_prod_fecha ON MOVIMIENTOS_INVENTARIO(IDProducto, FechaHora);
 CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON VENTAS(FechaHora);
+CREATE INDEX IF NOT EXISTS idx_deudas_estado ON DEUDAS(Estado, FechaActualizacion);
+CREATE INDEX IF NOT EXISTS idx_deudas_productos_deuda ON DEUDAS_PRODUCTOS(IDDeuda);
+CREATE INDEX IF NOT EXISTS idx_deudas_abonos_deuda ON DEUDAS_ABONOS(IDDeuda);
 
 -- 13. INDICES Y CONFIGURACION ADICIONAL
 """
+
+_DEUDAS_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS DEUDAS (
+        IDDeuda INTEGER PRIMARY KEY AUTOINCREMENT,
+        NombrePersona VARCHAR(150) NOT NULL,
+        Telefono VARCHAR(40),
+        TipoDeuda VARCHAR(20) NOT NULL CHECK (TipoDeuda IN ('MONTO', 'PRODUCTOS')),
+        TotalDeuda DECIMAL(12, 2) NOT NULL CHECK (TotalDeuda >= 0),
+        TotalAbonado DECIMAL(12, 2) NOT NULL DEFAULT 0.00 CHECK (TotalAbonado >= 0),
+        SaldoPendiente DECIMAL(12, 2) NOT NULL CHECK (SaldoPendiente >= 0),
+        Estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE' CHECK (Estado IN ('PENDIENTE', 'PAGADO')),
+        Notas TEXT,
+        IDUsuario INTEGER NOT NULL DEFAULT 1,
+        FechaCreacion DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+        FechaActualizacion DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+        FechaPago DATETIME
+    )""",
+    """CREATE TABLE IF NOT EXISTS DEUDAS_PRODUCTOS (
+        IDDeudaProducto INTEGER PRIMARY KEY AUTOINCREMENT,
+        IDDeuda INTEGER NOT NULL,
+        IDProducto INTEGER,
+        NombreProducto VARCHAR(150) NOT NULL,
+        Cantidad DECIMAL(12, 3) NOT NULL CHECK (Cantidad > 0),
+        PrecioUnitario DECIMAL(12, 4) NOT NULL CHECK (PrecioUnitario >= 0),
+        Subtotal DECIMAL(12, 2) NOT NULL CHECK (Subtotal >= 0),
+        FechaRegistro DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (IDDeuda) REFERENCES DEUDAS(IDDeuda) ON DELETE CASCADE,
+        FOREIGN KEY (IDProducto) REFERENCES PRODUCTOS(IDProducto) ON DELETE SET NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS DEUDAS_ABONOS (
+        IDAbono INTEGER PRIMARY KEY AUTOINCREMENT,
+        IDDeuda INTEGER NOT NULL,
+        Monto DECIMAL(12, 2) NOT NULL CHECK (Monto > 0),
+        MetodoPago VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO' CHECK (MetodoPago IN ('EFECTIVO', 'TRANSFERENCIA')),
+        Nota TEXT,
+        RegistrarEnCaja INTEGER NOT NULL DEFAULT 0,
+        IDMovimientoCaja INTEGER,
+        IDUsuario INTEGER NOT NULL DEFAULT 1,
+        FechaHora DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (IDDeuda) REFERENCES DEUDAS(IDDeuda) ON DELETE CASCADE
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_deudas_estado ON DEUDAS(Estado, FechaActualizacion)",
+    "CREATE INDEX IF NOT EXISTS idx_deudas_productos_deuda ON DEUDAS_PRODUCTOS(IDDeuda)",
+    "CREATE INDEX IF NOT EXISTS idx_deudas_abonos_deuda ON DEUDAS_ABONOS(IDDeuda)",
+)
+
+
+def ensure_deudores_schema(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    for stmt in _DEUDAS_STATEMENTS:
+        cur.execute(stmt)
 
 def _should_sync_cloud() -> bool:
     global _SYNCING_LOCK

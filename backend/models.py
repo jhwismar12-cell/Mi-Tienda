@@ -411,3 +411,83 @@ class PedidoOut(BaseModel):
     factura_recepcion: Optional[str] = None
     fecha_recepcion: Optional[str] = None
     items: List[PedidoDetalleOut] = []
+
+
+# --- Debtors / Deudores (Fiados) Models ---
+class DeudaProductoInput(BaseModel):
+    id_producto: Optional[int] = None
+    nombre_producto: str = Field(..., min_length=1, max_length=150)
+    cantidad: float = Field(..., gt=0)
+    precio_unitario: float = Field(..., ge=0)
+
+
+class DeudaCreateRequest(BaseModel):
+    nombre_persona: str = Field(..., min_length=1, max_length=150)
+    telefono: Optional[str] = None
+    tipo_deuda: Literal["MONTO", "PRODUCTOS"] = "MONTO"
+    monto: Optional[float] = Field(None, ge=0)
+    items: List[DeudaProductoInput] = []
+    notas: Optional[str] = None
+    descontar_stock: bool = False
+    id_usuario: Optional[int] = None
+
+
+class DeudaUpdateRequest(BaseModel):
+    nombre_persona: Optional[str] = Field(None, min_length=1, max_length=150)
+    telefono: Optional[str] = None
+    monto: Optional[float] = Field(None, ge=0)
+    items: Optional[List[DeudaProductoInput]] = None
+    notas: Optional[str] = None
+
+
+class DeudaAgregarRequest(BaseModel):
+    monto_extra: Optional[float] = Field(None, gt=0)
+    items: List[DeudaProductoInput] = []
+    nota: Optional[str] = None
+    descontar_stock: bool = False
+    id_usuario: Optional[int] = None
+
+
+class DeudaAbonoRequest(BaseModel):
+    monto: float = Field(..., gt=0)
+    metodo_pago: Literal["EFECTIVO", "TRANSFERENCIA"] = "EFECTIVO"
+    nota: Optional[str] = None
+    registrar_en_caja: bool = False
+    id_usuario: Optional[int] = None
+
+
+class DeudaProductoOut(BaseModel):
+    id_deuda_producto: int
+    id_producto: Optional[int] = None
+    nombre_producto: str
+    cantidad: float
+    precio_unitario: float
+    subtotal: float
+    fecha_registro: str
+
+
+class DeudaAbonoOut(BaseModel):
+    id_abono: int
+    monto: float
+    metodo_pago: str
+    nota: Optional[str] = None
+    registrar_en_caja: bool = False
+    id_movimiento_caja: Optional[int] = None
+    fecha_hora: str
+
+
+class DeudaOut(BaseModel):
+    id_deuda: int
+    nombre_persona: str
+    telefono: Optional[str] = None
+    tipo_deuda: Literal["MONTO", "PRODUCTOS"]
+    total_deuda: float
+    total_abonado: float
+    saldo_pendiente: float
+    estado: Literal["PENDIENTE", "PAGADO"]
+    notas: Optional[str] = None
+    fecha_creacion: str
+    fecha_actualizacion: str
+    fecha_pago: Optional[str] = None
+    items: List[DeudaProductoOut] = []
+    abonos: List[DeudaAbonoOut] = []

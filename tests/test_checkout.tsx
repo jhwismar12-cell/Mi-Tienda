@@ -15,6 +15,7 @@ import {
 } from '../src/components/pos/BulkProductCreateForm';
 import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
 import { PosScreen } from '../src/components/pos/PosScreen';
+import { DebtorsScreen } from '../src/components/debtors/DebtorsScreen';
 import { KardexScreen } from '../src/components/kardex/KardexScreen';
 import { DashboardScreen } from '../src/components/reports/DashboardScreen';
 import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
@@ -2568,4 +2569,129 @@ test('BulkSaleModal lets user assign any product to a Granel category, exclude f
     await huevoSelectAfter.props.onChange({ target: { value: 'auto' } });
   });
   assert.equal(updatedPayloads[3].descripcion, 'Promo: Cubeta (30 x $4.50)');
+});
+
+test('DebtorsScreen supports Solo Monto mode, Con Productos mode with total, and payment abono', async (t) => {
+  const debtorsStore: any[] = [];
+  let nextDebtId = 10;
+
+  t.mock.method(api, 'getDeudores', async () => debtorsStore.map(d => ({ ...d })));
+  t.mock.method(api, 'crearDeuda', async (payload: any) => {
+    const items = (payload.items || []).map((it: any, idx: number) => ({
+      id_deuda_producto: idx + 1,
+      id_producto: it.id_producto ?? null,
+      nombre_producto: it.nombre_producto,
+      cantidad: it.cantidad,
+      precio_unitario: it.precio_unitario,
+      subtotal: Number((it.cantidad * it.precio_unitario).toFixed(2)),
+      fecha_registro: '2026-11-22 17:00:00'
+    }));
+    const total =
+      payload.tipo_deuda === 'PRODUCTOS'
+        ? Number(items.reduce((s: number, i: any) => s + i.subtotal, 0).toFixed(2))
+        : Number(payload.monto);
+    const created = {
+      id_deuda: nextDebtId++,
+      nombre_persona: payload.nombre_persona,
+      telefono: payload.telefono ?? null,
+      tipo_deuda: payload.tipo_deuda,
+      total_deuda: total,
+      total_abonado: 0,
+      saldo_pendiente: total,
+      estado: 'PENDIENTE',
+      notas: payload.notas ?? null,
+      fecha_creacion: '2026-11-22 17:00:00',
+      fecha_actualizacion: '2026-11-22 17:00:00',
+      fecha_pago: null,
+      items,
+      abonos: []
+    };
+    debtorsStore.unshift(created);
+    return created;
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><DebtorsScreen /></StoreProvider>);
+  });
+
+  // 1. Open "Deudor Solo Monto" modal and create a money-only debtor
+  const soloMontoBtn = renderer.root
+    .findAllByType('button')
+    .find(b => textOf(b).includes('Deudor Solo Monto'));
+  assert.ok(soloMontoBtn, 'Expected Deudor Solo Monto button');
+  await act(async () => { soloMontoBtn.props.onClick(); });
+
+  const nameInput = renderer.root.findByProps({ id: 'debtor-name-input' });
+  const amountInput = renderer.root.findByProps({ id: 'debtor-amount-input' });
+  await act(async () => {
+    nameInput.props.onChange({ target: { value: 'Ana Gómez' } });
+    amountInput.props.onChange({ target: { value: '12.50' } });
+  });
+  const form1 = renderer.root.findByType('form');
+  await act(async () => {
+    await form1.props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(debtorsStore.length, 1);
+  assert.equal(debtorsStore[0].nombre_persona, 'Ana Gómez');
+  assert.equal(debtorsStore[0].tipo_deuda, 'MONTO');
+  assert.equal(debtorsStore[0].total_deuda, 12.5);
+
+  // 2. Open "Deudor con Productos" modal, add 2 manual items, verify total and save
+  const conProdBtn = renderer.root
+    .findAllByType('button')
+    .find(b => textOf(b).includes('Deudor con Productos'));
+  assert.ok(conProdBtn, 'Expected Deudor con Productos button');
+  await act(async () => { conProdBtn.props.onClick(); });
+
+  const nameInput2 = renderer.root.findByProps({ id: 'debtor-name-input' });
+  const customName = renderer.root.findByProps({ 'aria-label': 'Producto manual' });
+  const customQty = renderer.root.findByProps({ 'aria-label': 'Cantidad manual' });
+  const customPrice = renderer.root.findByProps({ 'aria-label': 'Precio unitario manual' });
+  const addCustomBtn = renderer.root
+    .findAllByType('button')
+    .find(b => textOf(b).includes('Añadir'));
+  assert.ok(addCustomBtn, 'Expected manual add button');
+
+  await act(async () => {
+    nameInput2.props.onChange({ target: { value: 'Luis Pérez' } });
+    customName.props.onChange({ target: { value: 'Arroz 2lb' } });
+    customQty.props.onChange({ target: { value: '2' } });
+    customPrice.props.onChange({ target: { value: '1.25' } });
+  });
+  await act(async () => { addCustomBtn.props.onClick(); });
+
+  await act(async () => {
+    renderer.root.findByProps({ 'aria-label': 'Producto manual' }).props.onChange({ target: { value: 'Aceite' } });
+    renderer.root.findByProps({ 'aria-label': 'Cantidad manual' }).props.onChange({ target: { value: '1' } });
+    renderer.root.findByProps({ 'aria-label': 'Precio unitario manual' }).props.onChange({ target: { value: '2.50' } });
+  });
+  await act(async () => {
+    renderer.root.findAllByType('button').find(b => textOf(b).includes('Añadir'))!.props.onClick();
+  });
+
+  const form2 = renderer.root.findByType('form');
+  await act(async () => {
+    await form2.props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(debtorsStore.length, 2);
+  assert.equal(debtorsStore[0].nombre_persona, 'Luis Pérez');
+  assert.equal(debtorsStore[0].tipo_deuda, 'PRODUCTOS');
+  assert.equal(debtorsStore[0].total_deuda, 5.0);
+  assert.equal(debtorsStore[0].items.length, 2);
+
+  // Verify both debtors and total por cobrar ($17.50) render on screen
+  const screenText = textOf(renderer.root);
+  assert.ok(screenText.includes('Ana Gómez'));
+  assert.ok(screenText.includes('Luis Pérez'));
+  assert.ok(screenText.includes('Arroz 2lb'));
+  assert.ok(screenText.includes('$17.50'));
 });
