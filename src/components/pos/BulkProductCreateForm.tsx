@@ -36,6 +36,8 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
       ? 'Frutas y Verduras'
       : initialGroup === 'papeleria' && categories.includes('Hogar')
       ? 'Hogar'
+      : initialGroup === 'dulces' && categories.includes('Snacks')
+      ? 'Snacks'
       : categories[0] || 'Abarrotes';
 
   const [name, setName] = useState(initialName);
@@ -103,7 +105,16 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
     savingRef.current = true;
     setIsSaving(true);
 
-    const codePrefix = unit === 'UNIDAD' && !hasValidCombo && !allowFraction ? 'SINCOD' : 'GRN';
+    const codePrefix =
+      initialGroup === 'dulces'
+        ? 'DUL'
+        : initialGroup === 'tabacos'
+        ? 'TAB'
+        : initialGroup === 'papeleria'
+        ? 'PAP'
+        : unit === 'UNIDAD' && !hasValidCombo && !allowFraction
+        ? 'SINCOD'
+        : 'GRN';
     const generatedCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
     const description = formatPromoDescription(comboQty, comboTotal, note, comboName);
 

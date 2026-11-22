@@ -92,6 +92,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       all: bulkProducts.length,
       verdes: 0,
       granos_harinas: 0,
+      dulces: 0,
       tabacos: 0,
       papeleria: 0,
       otros: 0
@@ -348,7 +349,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
             </div>
             <div className="min-w-0">
               <h2 className="font-bold text-sm sm:text-base leading-tight truncate">
-                Granel, Verdes, Granos, Tabacos y Papelería
+                Granel: Verdes, Granos, Dulces, Tabacos y Papelería
               </h2>
               <p className="text-[11px] text-white/70 truncate">
                 Agrega varios productos y combos; al terminar presiona "Productos de Granel Listos"

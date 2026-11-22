@@ -2343,3 +2343,83 @@ test('BulkSaleModal supports named multi-combos, Papeleria tab, multi-item stay-
   const dashText = textOf(renderer.toJSON());
   assert.ok(dashText.includes('Retirar dinero'), 'Expected Retirar dinero button in Reportes Arqueo');
 });
+
+test('BulkSaleModal Dulces tab includes Bianchi, Kataboom, Jet, Nucita, Jazz, and loose Halls while excluding Halls barra', async (t) => {
+  const candyCatalog: BackendProduct[] = [
+    {
+      id_producto: 401, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-609709',
+      nombre: 'CARAMELO BIANCHI CHOCOLATE 400GR', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.03, precio_venta_actual: 0.05, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 20, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 402, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-374707',
+      nombre: 'KATABOOM', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.03, precio_venta_actual: 0.05, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 20, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 403, id_categoria: 2, categoria_nombre: 'Lácteos', codigo_interno: 'AUT-582449',
+      nombre: 'JET', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.14, precio_venta_actual: 0.20, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 10, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 404, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'IMP-FE9154922ED5',
+      nombre: 'NUCITA CREMA ORIGINAL 14G', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.14, precio_venta_actual: 0.20, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 12, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 405, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'DUL-000101',
+      nombre: 'JAZZ', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.06, precio_venta_actual: 0.10, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 15, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 406, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'DUL-000102',
+      nombre: 'HALLS SUELTO MENTA', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.05, precio_venta_actual: 0.10, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 30, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 407, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-999001',
+      nombre: 'HALLS BARRA MENTA', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.35, precio_venta_actual: 0.50, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 12, permite_fraccion: false, activo: true, codigos_barras: ['762220100001']
+    },
+    {
+      id_producto: 408, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-999002',
+      nombre: 'HALLS BARRA NEGRO', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.35, precio_venta_actual: 0.50, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 8, permite_fraccion: false, activo: true, codigos_barras: []
+    }
+  ];
+  t.mock.method(api, 'getProductos', async () => candyCatalog);
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+
+  const dulcesTab = renderer.root.findAllByType('button').find(b => b.props.role === 'tab' && textOf(b).includes('Dulces'));
+  assert.ok(dulcesTab, 'Expected Dulces subcategory tab in BulkSaleModal');
+  await act(async () => { dulcesTab.props.onClick(); });
+
+  const cards = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .map(n => textOf(n));
+
+  assert.equal(cards.length, 6);
+  for (const expectedName of ['CARAMELO BIANCHI CHOCOLATE 400GR', 'KATABOOM', 'JET', 'NUCITA CREMA ORIGINAL 14G', 'JAZZ', 'HALLS SUELTO MENTA']) {
+    assert.ok(cards.some(c => c.includes(expectedName)), `Expected ${expectedName} in Dulces`);
+  }
+  assert.ok(!cards.some(c => c.includes('HALLS BARRA')), 'Halls barra must NOT appear in Dulces');
+});

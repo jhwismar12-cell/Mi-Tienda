@@ -4,6 +4,7 @@ export type BulkSubcategory =
   | 'all'
   | 'verdes'
   | 'granos_harinas'
+  | 'dulces'
   | 'tabacos'
   | 'papeleria'
   | 'otros';
@@ -18,6 +19,7 @@ export const BULK_SUBCATEGORIES: BulkSubcategoryMeta[] = [
   { key: 'all', label: 'Todos', emoji: '⚖️' },
   { key: 'verdes', label: 'Productos Verdes', emoji: '🥬' },
   { key: 'granos_harinas', label: 'Granos y Harinas', emoji: '🌾' },
+  { key: 'dulces', label: 'Dulces', emoji: '🍬' },
   { key: 'tabacos', label: 'Tabacos', emoji: '🚬' },
   { key: 'papeleria', label: 'Papelería', emoji: '✏️' },
   { key: 'otros', label: 'Otros Granel', emoji: '🥚' }
@@ -44,6 +46,16 @@ const STATIONERY_RE =
 
 const STATIONERY_EXCL_RE =
   /\b(fosforera|globos|naipe|higienic|aluminio|servilleta|toalla|oregano|mogul)\b/i;
+
+const CANDY_ALWAYS_RE =
+  /\b(bianchis?|katab+o+m+s?|catab+o+m+s?|jet|nucitas?|jazz|caramelos?|chupetes?|chupeteres?|vaferitos?|piazza|millows|bon\s*bon\s*bum|bonbon|frunas?|tumix|bubbaloo|sparkies|revolcon|barrilete|trululu|gomitas?|malvaviscos?)\b/i;
+
+const HALLS_RE = /\bhalls?\b/i;
+const HALLS_BAR_EXCL_RE = /\b(barras?|paquetes?|display|cajas?|x\s*9|x\s*12|x\s*20)\b/i;
+const HALLS_LOOSE_HINT_RE = /\b(suelt[oa]s?|indiv(?:idual)?|unidad(?:es)?|unid|caramelo|pastilla|1\s*u)\b/i;
+const CANDY_UNBARCODED_RE = /\b(chicles?|trident|agogo|mentos|clorets|mentas?)\b/i;
+const CANDY_EXCL_RE =
+  /\b(chifle|mani|sirope|te\b|leche|galleta|bimbo|submarino|jabon|shampoo|detergente|suavizante|desinfectante|pan|tostado|arroz|aceite|agua|jugo|gaseosa|powerade|vivant|toni|cocoa|avena)\b/i;
 
 const PACKAGED_NOISE_RE =
   /\b(\d+\s*(?:ml|cc|gr|g|oz|lt)|tetra\s*pack|panos|multiusos|rizadas|chips|snack|jugo|gaseosa|jabon|detergente|suavizante|shampoo|cloro|desinfectante)\b/i;
@@ -165,17 +177,48 @@ export type BulkProductLike = Pick<
   name?: string;
   code?: string;
   distributor?: string;
+  barcode?: string;
+  salePrice?: number;
 };
 
-export function isTobaccoProduct(prod: Pick<BulkProductLike, 'name' | 'category'>): boolean {
+export function isTobaccoProduct(
+  prod: Pick<BulkProductLike, 'name' | 'category' | 'code'>
+): boolean {
+  const code = (prod.code || '').toUpperCase();
+  if (code.startsWith('TAB-')) return true;
   const name = normalizeBulkText(prod.name);
   const cat = normalizeBulkText(prod.category);
   return TOBACCO_RE.test(name) || cat.includes('tabac') || cat.includes('cigar');
 }
 
-export function isStationeryProduct(
-  prod: Pick<BulkProductLike, 'name' | 'category' | 'distributor'>
+export function isCandyProduct(
+  prod: Pick<BulkProductLike, 'name' | 'category' | 'code' | 'barcode' | 'salePrice'>
 ): boolean {
+  const code = (prod.code || '').toUpperCase();
+  if (code.startsWith('DUL-')) return true;
+
+  const name = normalizeBulkText(prod.name);
+  const cat = normalizeBulkText(prod.category);
+  const hasBarcode = Boolean(prod.barcode && prod.barcode.trim() !== '');
+  const price = typeof prod.salePrice === 'number' ? prod.salePrice : 0;
+
+  if (name && HALLS_RE.test(name)) {
+    if (HALLS_BAR_EXCL_RE.test(name)) return false;
+    return !hasBarcode || HALLS_LOOSE_HINT_RE.test(name) || (price > 0 && price <= 0.25);
+  }
+
+  if (name && CANDY_EXCL_RE.test(name)) return false;
+  if (cat.includes('dulce') || cat.includes('golosin')) return true;
+  if (name && CANDY_ALWAYS_RE.test(name)) return true;
+  if (!hasBarcode && name && CANDY_UNBARCODED_RE.test(name)) return true;
+  return false;
+}
+
+export function isStationeryProduct(
+  prod: Pick<BulkProductLike, 'name' | 'category' | 'distributor' | 'code'>
+): boolean {
+  const code = (prod.code || '').toUpperCase();
+  if (code.startsWith('PAP-')) return true;
   const name = normalizeBulkText(prod.name);
   const cat = normalizeBulkText(prod.category);
   const dist = normalizeBulkText(prod.distributor);
@@ -190,6 +233,7 @@ export function isStationeryProduct(
 
 export function isBulkEligibleProduct(prod: BulkProductLike): boolean {
   if (isTobaccoProduct(prod)) return true;
+  if (isCandyProduct(prod)) return true;
   if (isStationeryProduct(prod)) return true;
 
   const code = (prod.code || '').toUpperCase();
@@ -219,6 +263,7 @@ export function classifyBulkSubcategory(
   prod: BulkProductLike
 ): Exclude<BulkSubcategory, 'all'> {
   if (isTobaccoProduct(prod)) return 'tabacos';
+  if (isCandyProduct(prod)) return 'dulces';
   if (isStationeryProduct(prod)) return 'papeleria';
 
   const code = (prod.code || '').toUpperCase();
