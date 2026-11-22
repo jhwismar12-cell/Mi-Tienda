@@ -7,6 +7,11 @@ import { useStoreProviders } from '../../utils/providers';
 import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { BarcodeCameraModal } from './BarcodeCameraModal';
 import { ProviderSelectorField } from './ProviderSelectorField';
+import {
+  ASSIGNABLE_BULK_SUBCATEGORIES,
+  BulkCategoryOverride,
+  applyBulkCategoryOverride
+} from '../pos/bulkCategories';
 
 export const NewProductModal: React.FC = () => {
   const {
@@ -29,6 +34,7 @@ export const NewProductModal: React.FC = () => {
   const [unit, setUnit] = useState('UNIDAD');
   const [allowFraction, setAllowFraction] = useState(false);
   const [description, setDescription] = useState('');
+  const [bulkCategory, setBulkCategory] = useState<'auto' | BulkCategoryOverride>('auto');
   const [costPrice, setCostPrice] = useState('1.00');
   const [salePrice, setSalePrice] = useState('1.50');
   const [stock, setStock] = useState('20');
@@ -50,6 +56,7 @@ export const NewProductModal: React.FC = () => {
       setUnit('UNIDAD');
       setAllowFraction(false);
       setDescription('');
+      setBulkCategory('auto');
       setCostPrice('1.00');
       setSalePrice('1.50');
       setStock('20');
@@ -93,6 +100,10 @@ export const NewProductModal: React.FC = () => {
     }
 
     const finalCode = code.trim() || `AUT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const finalDescription = applyBulkCategoryOverride(
+      description.trim(),
+      bulkCategory === 'auto' ? null : bulkCategory
+    );
 
     savingProduct.current = true;
     setIsSaving(true);
@@ -107,7 +118,7 @@ export const NewProductModal: React.FC = () => {
         distributor,
         unit,
         allowFraction,
-        description: description.trim() || undefined,
+        description: finalDescription || undefined,
         costPrice: roundCostPrice(parseDecimalInput(costPrice)),
         salePrice: parseDecimalInput(salePrice),
         stock: parseFloat(stock) || 0,
@@ -376,6 +387,26 @@ export const NewProductModal: React.FC = () => {
                 <span>Permite decimales (peso/granel)</span>
               </label>
             </div>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+              Categoría en Granel (POS)
+            </label>
+            <select
+              aria-label="Categoría en Granel (POS)"
+              value={bulkCategory}
+              onChange={(e) => setBulkCategory(e.target.value as 'auto' | BulkCategoryOverride)}
+              className="w-full bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg px-3 py-2 text-[var(--ui-text)] outline-none text-xs font-semibold"
+            >
+              <option value="auto">✨ Automático (según nombre/medida)</option>
+              {ASSIGNABLE_BULK_SUBCATEGORIES.map((sub) => (
+                <option key={sub.key} value={sub.key}>
+                  {sub.emoji} {sub.label}
+                </option>
+              ))}
+              <option value="none">🚫 No mostrar en Granel</option>
+            </select>
           </div>
 
           <div>

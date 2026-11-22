@@ -2423,3 +2423,149 @@ test('BulkSaleModal Dulces tab includes Bianchi, Kataboom, Jet, Nucita, Jazz, an
   }
   assert.ok(!cards.some(c => c.includes('HALLS BARRA')), 'Halls barra must NOT appear in Dulces');
 });
+
+test('BulkSaleModal lets user assign any product to a Granel category, exclude from Granel, and preserve combos', async (t) => {
+  const mutableCatalog: BackendProduct[] = [
+    {
+      id_producto: 501, id_categoria: 1, categoria_nombre: 'Abarrotes', codigo_interno: 'GRN-HUEVO',
+      nombre: 'HUEVO', unidad_medida: 'UNIDAD',
+      descripcion: 'Promo: Cubeta (30 x $4.50)',
+      precio_compra_actual: 0.12, precio_venta_actual: 0.15, margen_minimo_porcentaje: 20,
+      stock_minimo: 10, stock_actual: 60, permite_fraccion: false, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 502, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-BAR-900',
+      nombre: 'GOLOSINA ESPECIAL BARRA', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.10, precio_venta_actual: 0.25, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 15, permite_fraccion: false, activo: true, codigos_barras: ['7861000099999']
+    },
+    {
+      id_producto: 503, id_categoria: 5, categoria_nombre: 'Snacks', codigo_interno: 'AUT-BIANCHI',
+      nombre: 'BIANCHI CHOCOLATE', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.03, precio_venta_actual: 0.05, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 40, permite_fraccion: false, activo: true, codigos_barras: []
+    }
+  ];
+
+  const updatedPayloads: Array<{ id: number; descripcion?: string }> = [];
+  t.mock.method(api, 'getProductos', async () => mutableCatalog.map(p => ({ ...p })));
+  t.mock.method(api, 'actualizarProducto', async (id: number, payload: any) => {
+    updatedPayloads.push({ id, descripcion: payload.descripcion });
+    const target = mutableCatalog.find(p => p.id_producto === id);
+    assert.ok(target, `Expected product ${id}`);
+    if (payload.descripcion !== undefined) {
+      target.descripcion = payload.descripcion;
+    }
+    return { ...target };
+  });
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+
+  // 1. Switch to Catálogo tab so we can pick a barcoded product that isn't auto-eligible for Granel
+  const catalogTab = renderer.root
+    .findAllByType('button')
+    .find(b => textOf(b).includes('Catálogo'));
+  assert.ok(catalogTab, 'Expected Catálogo tab in BulkSaleModal');
+  await act(async () => { catalogTab.props.onClick(); });
+
+  const specialCard = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .find(n => textOf(n).includes('GOLOSINA ESPECIAL BARRA'));
+  assert.ok(specialCard, 'Expected barcoded product visible in Catálogo tab');
+  await act(async () => { specialCard.props.onClick(); });
+
+  const catSelect = renderer.root
+    .findAllByType('select')
+    .find(s => s.props['aria-label'] === 'Categoría en Granel');
+  assert.ok(catSelect, 'Expected Categoría en Granel select in detail card');
+  assert.equal(catSelect.props.value, 'auto');
+
+  // Assign barcoded product manually to Dulces
+  await act(async () => {
+    await catSelect.props.onChange({ target: { value: 'dulces' } });
+  });
+  assert.equal(updatedPayloads[0].id, 502);
+  assert.equal(updatedPayloads[0].descripcion, '[Granel: dulces]');
+
+  // Switch back to Granel -> Dulces tab and verify GOLOSINA ESPECIAL BARRA is now there alongside BIANCHI
+  const granelTab = renderer.root
+    .findAllByType('button')
+    .find(b => textOf(b).includes('⚖️ Granel'));
+  assert.ok(granelTab, 'Expected Granel tab');
+  await act(async () => { granelTab.props.onClick(); });
+
+  const dulcesTab = renderer.root
+    .findAllByType('button')
+    .find(b => b.props.role === 'tab' && textOf(b).includes('Dulces'));
+  assert.ok(dulcesTab, 'Expected Dulces tab');
+  await act(async () => { dulcesTab.props.onClick(); });
+
+  const dulcesCards = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .map(n => textOf(n));
+  assert.ok(dulcesCards.some(c => c.includes('GOLOSINA ESPECIAL BARRA')), 'Manually assigned product must appear in Dulces');
+  assert.ok(dulcesCards.some(c => c.includes('BIANCHI CHOCOLATE')), 'Auto-detected candy remains in Dulces');
+
+  // 2. Exclude BIANCHI CHOCOLATE from Granel using "none"
+  const bianchiCard = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .find(n => textOf(n).includes('BIANCHI CHOCOLATE'));
+  assert.ok(bianchiCard);
+  await act(async () => { bianchiCard.props.onClick(); });
+  const bianchiSelect = renderer.root
+    .findAllByType('select')
+    .find(s => s.props['aria-label'] === 'Categoría en Granel');
+  assert.ok(bianchiSelect);
+  await act(async () => {
+    await bianchiSelect.props.onChange({ target: { value: 'none' } });
+  });
+  assert.equal(updatedPayloads[1].descripcion, '[Granel: none]');
+
+  const dulcesAfterExclude = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .map(n => textOf(n));
+  assert.ok(!dulcesAfterExclude.some(c => c.includes('BIANCHI CHOCOLATE')), 'Excluded product must disappear from Granel');
+
+  // 3. Reassign HUEVO (which already has a combo) to Productos Verdes and verify combo is preserved
+  const allSubTab = renderer.root
+    .findAllByType('button')
+    .find(b => b.props.role === 'tab' && textOf(b).includes('Todos'));
+  assert.ok(allSubTab);
+  await act(async () => { allSubTab.props.onClick(); });
+
+  const huevoCard = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .find(n => textOf(n).includes('HUEVO'));
+  assert.ok(huevoCard);
+  await act(async () => { huevoCard.props.onClick(); });
+
+  const huevoSelect = renderer.root
+    .findAllByType('select')
+    .find(s => s.props['aria-label'] === 'Categoría en Granel');
+  assert.ok(huevoSelect);
+  await act(async () => {
+    await huevoSelect.props.onChange({ target: { value: 'verdes' } });
+  });
+  assert.equal(updatedPayloads[2].descripcion, 'Promo: Cubeta (30 x $4.50) [Granel: verdes]');
+
+  // Reset back to auto and verify combo stays intact without tag
+  const huevoSelectAfter = renderer.root
+    .findAllByType('select')
+    .find(s => s.props['aria-label'] === 'Categoría en Granel');
+  assert.ok(huevoSelectAfter);
+  assert.equal(huevoSelectAfter.props.value, 'verdes');
+  await act(async () => {
+    await huevoSelectAfter.props.onChange({ target: { value: 'auto' } });
+  });
+  assert.equal(updatedPayloads[3].descripcion, 'Promo: Cubeta (30 x $4.50)');
+});

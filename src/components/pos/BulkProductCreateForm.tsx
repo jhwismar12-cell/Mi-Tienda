@@ -7,6 +7,8 @@ import { useStoreProviders } from '../../utils/providers';
 import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 import {
+  ASSIGNABLE_BULK_SUBCATEGORIES,
+  AssignableBulkSubcategory,
   BulkSubcategory,
   formatPromoDescription,
   isBulkEligibleProduct
@@ -42,6 +44,9 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
 
   const [name, setName] = useState(initialName);
   const [category, setCategory] = useState<string>(defaultCat);
+  const [bulkGroup, setBulkGroup] = useState<'auto' | AssignableBulkSubcategory>(
+    initialGroup !== 'all' ? initialGroup : 'auto'
+  );
   const [providerId, setProviderId] = useState<number | undefined>(undefined);
   const [distributor, setDistributor] = useState<string | undefined>(undefined);
   const [unit, setUnit] = useState<'UNIDAD' | 'LIBRA' | 'KG' | 'GALON'>(
@@ -105,18 +110,27 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
     savingRef.current = true;
     setIsSaving(true);
 
+    const effectiveGroup = bulkGroup !== 'auto' ? bulkGroup : initialGroup;
     const codePrefix =
-      initialGroup === 'dulces'
+      effectiveGroup === 'dulces'
         ? 'DUL'
-        : initialGroup === 'tabacos'
+        : effectiveGroup === 'tabacos'
         ? 'TAB'
-        : initialGroup === 'papeleria'
+        : effectiveGroup === 'papeleria'
         ? 'PAP'
+        : effectiveGroup === 'verdes'
+        ? 'FRV'
         : unit === 'UNIDAD' && !hasValidCombo && !allowFraction
         ? 'SINCOD'
         : 'GRN';
     const generatedCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
-    const description = formatPromoDescription(comboQty, comboTotal, note, comboName);
+    const description = formatPromoDescription(
+      comboQty,
+      comboTotal,
+      note,
+      comboName,
+      bulkGroup === 'auto' ? null : bulkGroup
+    );
 
     try {
       const created = await addProduct({
@@ -203,6 +217,29 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
               ))}
             </select>
           </div>
+        </div>
+
+        <div>
+          <label
+            htmlFor="bulk-create-group-select"
+            className="block text-xs font-bold text-[var(--ui-secondary)] mb-1"
+          >
+            Sección en Granel
+          </label>
+          <select
+            id="bulk-create-group-select"
+            aria-label="Sección en Granel"
+            value={bulkGroup}
+            onChange={(e) => setBulkGroup(e.target.value as 'auto' | AssignableBulkSubcategory)}
+            className="w-full px-3 py-2 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl text-sm font-semibold text-[var(--ui-text)] outline-none"
+          >
+            <option value="auto">✨ Automático (según nombre o medida)</option>
+            {ASSIGNABLE_BULK_SUBCATEGORIES.map((sub) => (
+              <option key={sub.key} value={sub.key}>
+                {sub.emoji} {sub.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <ProviderSelectorField

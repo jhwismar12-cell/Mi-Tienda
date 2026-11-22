@@ -19,14 +19,22 @@ import { Product } from '../../types';
 import { canAutoFocusInput } from '../../utils/responsive';
 import { BulkProductCreateForm, isBulkEligibleProduct } from './BulkProductCreateForm';
 import {
+  ASSIGNABLE_BULK_SUBCATEGORIES,
   BULK_SUBCATEGORIES,
+  BulkCategoryOverride,
   BulkSubcategory,
   ParsedPromo,
+  applyBulkCategoryOverride,
   classifyBulkSubcategory,
+  classifyBulkSubcategoryAuto,
   extractNoteFromDescription,
+  getBulkSubcategoryMeta,
+  isBulkEligibleAuto,
+  parseBulkCategoryOverride,
   parsePromoFromDescription,
   parsePromosFromDescription,
-  serializePromosToDescription
+  serializePromosToDescription,
+  stripBulkCategoryTag
 } from './bulkCategories';
 
 export type { ParsedPromo };
@@ -47,7 +55,7 @@ interface BulkSaleModalProps {
 
 export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose }) => {
   const { products, cart, addProductToCart, updateProduct, setActiveScreen, showToast } = useStore();
-  const [tab, setTab] = useState<'bulk' | 'all_unbarcoded'>('bulk');
+  const [tab, setTab] = useState<'bulk' | 'all_unbarcoded' | 'all_catalog'>('bulk');
   const [bulkSubcategory, setBulkSubcategory] = useState<BulkSubcategory>('all');
   const [search, setSearch] = useState('');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -68,6 +76,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   const [newComboTotal, setNewComboTotal] = useState('');
   const [comboError, setComboError] = useState<string | null>(null);
   const [isSavingCombo, setIsSavingCombo] = useState(false);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
@@ -104,20 +113,28 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   }, [bulkProducts]);
 
   const filteredList = useMemo(() => {
-    let base = tab === 'bulk' ? bulkProducts : unbarcodedProducts;
+    let base =
+      tab === 'bulk'
+        ? bulkProducts
+        : tab === 'all_unbarcoded'
+        ? unbarcodedProducts
+        : products;
     if (tab === 'bulk' && bulkSubcategory !== 'all') {
       base = base.filter(p => classifyBulkSubcategory(p) === bulkSubcategory);
     }
     const q = search.trim().toLowerCase();
     const matched = !q
       ? base
-      : base.filter(
-          p =>
+      : base.filter(p => {
+          const cleanDesc = stripBulkCategoryTag(p.description).toLowerCase();
+          return (
             p.name.toLowerCase().includes(q) ||
             p.code.toLowerCase().includes(q) ||
+            (p.barcode && p.barcode.toLowerCase().includes(q)) ||
             p.category.toLowerCase().includes(q) ||
-            (p.description && p.description.toLowerCase().includes(q))
-        );
+            cleanDesc.includes(q)
+          );
+        });
     // Keep available stock first, then alphabetical
     return [...matched].sort((a, b) => {
       const aHas = a.stock > 0 ? 1 : 0;
@@ -125,7 +142,13 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       if (aHas !== bHas) return bHas - aHas;
       return a.name.localeCompare(b.name);
     });
-  }, [tab, bulkSubcategory, bulkProducts, unbarcodedProducts, search]);
+  }, [tab, bulkSubcategory, bulkProducts, unbarcodedProducts, products, search]);
+
+  const visibleList = useMemo(() => {
+    if (tab !== 'all_catalog') return filteredList;
+    const limit = search.trim() ? 120 : 60;
+    return filteredList.slice(0, limit);
+  }, [tab, filteredList, search]);
 
   const selectedProduct: Product | null = useMemo(() => {
     if (!filteredList.length) return null;
@@ -133,8 +156,8 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       const found = filteredList.find(p => p.id === selectedProductId);
       if (found) return found;
     }
-    return filteredList[0];
-  }, [filteredList, selectedProductId]);
+    return visibleList[0] ?? filteredList[0];
+  }, [filteredList, visibleList, selectedProductId]);
 
   const cartTotal = useMemo(() => {
     return Number(cart.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2));
@@ -142,6 +165,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
 
   useEffect(() => {
     if (!isOpen) return;
+    setTab('bulk');
     setSearch('');
     setBulkSubcategory('all');
     setMobileStep('list');
@@ -275,12 +299,14 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
 
     const existingPromos = parsePromosFromDescription(selectedProduct.description);
     const existingNote = extractNoteFromDescription(selectedProduct.description);
+    const existingOverride = parseBulkCategoryOverride(selectedProduct.description);
     const nextDescription = serializePromosToDescription(
       [
         ...existingPromos.map(p => ({ name: p.name, qty: p.qty, total: p.total })),
         { name: cleanName, qty, total }
       ],
-      existingNote
+      existingNote,
+      existingOverride
     );
 
     setComboError(null);
@@ -303,10 +329,11 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
     if (!selectedProduct || isSavingCombo) return;
     const existingPromos = parsePromosFromDescription(selectedProduct.description);
     const existingNote = extractNoteFromDescription(selectedProduct.description);
+    const existingOverride = parseBulkCategoryOverride(selectedProduct.description);
     const remaining = existingPromos
       .filter((_, idx) => idx !== indexToRemove)
       .map(p => ({ name: p.name, qty: p.qty, total: p.total }));
-    const nextDescription = serializePromosToDescription(remaining, existingNote) ?? '';
+    const nextDescription = serializePromosToDescription(remaining, existingNote, existingOverride) ?? '';
 
     setIsSavingCombo(true);
     try {
@@ -318,6 +345,37 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       setIsSavingCombo(false);
     }
   };
+
+  const handleChangeBulkCategory = async (nextValue: string) => {
+    if (!selectedProduct || isSavingCategory) return;
+    const override: BulkCategoryOverride | null =
+      nextValue === 'auto' ? null : (nextValue as BulkCategoryOverride);
+    const nextDescription = applyBulkCategoryOverride(selectedProduct.description, override);
+
+    setIsSavingCategory(true);
+    try {
+      await updateProduct(selectedProduct.id, { description: nextDescription });
+      if (override === null) {
+        showToast(`"${selectedProduct.name}" restaurado a categoría automática`);
+      } else if (override === 'none') {
+        showToast(`"${selectedProduct.name}" quitado de Granel`);
+      } else {
+        const meta = getBulkSubcategoryMeta(override);
+        showToast(`"${selectedProduct.name}" asignado a ${meta.emoji} ${meta.label}`);
+      }
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
+  const selectedCategoryOverride = selectedProduct
+    ? parseBulkCategoryOverride(selectedProduct.description)
+    : null;
+  const selectedIsEligible = selectedProduct ? isBulkEligibleProduct(selectedProduct) : false;
+  const selectedAutoEligible = selectedProduct ? isBulkEligibleAuto(selectedProduct) : false;
+  const selectedAutoSubMeta = selectedProduct
+    ? getBulkSubcategoryMeta(classifyBulkSubcategoryAuto(selectedProduct))
+    : null;
 
   const dollarPreview = selectedProduct ? computeDollarSelection(selectedProduct, dollarNum) : null;
   const fractionPresets = [0.25, 0.5, 1, 1.5, 2, 3];
@@ -407,7 +465,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
               }`}
             >
               <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center">
-                <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0">
+                <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0 overflow-x-auto">
                   <button
                     type="button"
                     onClick={() => setTab('bulk')}
@@ -417,7 +475,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                         : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
                     }`}
                   >
-                    ⚖️ Granel y Más ({bulkProducts.length})
+                    ⚖️ Granel ({bulkProducts.length})
                   </button>
                   <button
                     type="button"
@@ -428,7 +486,19 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                         : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
                     }`}
                   >
-                    📦 Todos sin Código ({unbarcodedProducts.length})
+                    📦 Sin Código ({unbarcodedProducts.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTab('all_catalog')}
+                    title="Busca cualquier producto del inventario para asignarlo a una categoría de Granel"
+                    className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate cursor-pointer ${
+                      tab === 'all_catalog'
+                        ? 'bg-[var(--ui-brand)] text-white shadow-xs'
+                        : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
+                    }`}
+                  >
+                    📋 Catálogo ({products.length})
                   </button>
                 </div>
 
@@ -518,93 +588,107 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {filteredList.map(prod => {
-                      const promos = parsePromosFromDescription(prod.description);
-                      const unitShort = formatUnitShort(prod.unit);
-                      const isSelected = selectedProduct?.id === prod.id;
-                      const outOfStock = prod.stock <= 0;
-                      const subMeta =
-                        tab === 'bulk' && bulkSubcategory === 'all'
-                          ? BULK_SUBCATEGORIES.find(s => s.key === classifyBulkSubcategory(prod))
-                          : undefined;
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {visibleList.map(prod => {
+                        const promos = parsePromosFromDescription(prod.description);
+                        const unitShort = formatUnitShort(prod.unit);
+                        const isSelected = selectedProduct?.id === prod.id;
+                        const outOfStock = prod.stock <= 0;
+                        const prodEligible = isBulkEligibleProduct(prod);
+                        const showSubBadge = tab !== 'bulk' || bulkSubcategory === 'all';
+                        const subMeta =
+                          showSubBadge && prodEligible
+                            ? getBulkSubcategoryMeta(classifyBulkSubcategory(prod))
+                            : undefined;
 
-                      return (
-                        <div
-                          key={prod.id}
-                          onClick={() => {
-                            setSelectedProductId(prod.id);
-                            setMobileStep('detail');
-                          }}
-                          className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2 ${
-                            isSelected
-                              ? 'border-[var(--ui-brand)] bg-[var(--ui-brand-soft)] shadow-xs ring-1 ring-[var(--ui-brand)]/30'
-                              : 'border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)]'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="font-bold text-xs sm:text-sm text-[var(--ui-text)] truncate">
-                                {prod.name}
-                              </div>
-                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] text-[var(--ui-secondary)] font-semibold uppercase">
-                                  {prod.unit || 'UNIDAD'}
-                                </span>
-                                {subMeta && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] font-semibold">
-                                    {subMeta.emoji} {subMeta.label}
-                                  </span>
-                                )}
-                                {outOfStock ? (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)]">
-                                    Stock: 0
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-mono font-semibold text-[var(--ui-brand-strong)]">
-                                    Stock: {prod.stock} {unitShort}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <div className="font-mono font-black text-sm text-[var(--ui-brand-strong)]">
-                                ${prod.salePrice.toFixed(2)}
-                              </div>
-                              <div className="text-[10px] text-[var(--ui-muted)]">por {unitShort}</div>
-                            </div>
-                          </div>
-
-                          {promos.length > 0 && (
-                            <div className="space-y-1">
-                              {promos.slice(0, 2).map((promo, pIdx) => (
-                                <button
-                                  key={`${prod.id}-promo-${pIdx}`}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedProductId(prod.id);
-                                    handleAddPromo(prod, promo);
-                                  }}
-                                  className="w-full py-1 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center justify-between gap-1 transition-colors cursor-pointer"
-                                >
-                                  <span className="flex items-center gap-1 min-w-0 truncate">
-                                    <Tag className="w-3 h-3 shrink-0" />
-                                    <span className="truncate">Combo {promo.label}</span>
-                                  </span>
-                                  <span className="text-[10px] underline shrink-0">+ Agregar</span>
-                                </button>
-                              ))}
-                              {promos.length > 2 && (
-                                <div className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold text-right">
-                                  +{promos.length - 2} combo(s) más en detalle
+                        return (
+                          <div
+                            key={prod.id}
+                            onClick={() => {
+                              setSelectedProductId(prod.id);
+                              setMobileStep('detail');
+                            }}
+                            className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                              isSelected
+                                ? 'border-[var(--ui-brand)] bg-[var(--ui-brand-soft)] shadow-xs ring-1 ring-[var(--ui-brand)]/30'
+                                : 'border-[var(--ui-border)] bg-[var(--ui-surface)] hover:bg-[var(--ui-surface-hover)]'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="font-bold text-xs sm:text-sm text-[var(--ui-text)] truncate">
+                                  {prod.name}
                                 </div>
-                              )}
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] text-[var(--ui-secondary)] font-semibold uppercase">
+                                    {prod.unit || 'UNIDAD'}
+                                  </span>
+                                  {subMeta ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] font-semibold">
+                                      {subMeta.emoji} {subMeta.label}
+                                    </span>
+                                  ) : showSubBadge ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ui-surface-muted)] text-[var(--ui-muted)] font-medium">
+                                      Fuera de Granel
+                                    </span>
+                                  ) : null}
+                                  {outOfStock ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)]">
+                                      Stock: 0
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-mono font-semibold text-[var(--ui-brand-strong)]">
+                                      Stock: {prod.stock} {unitShort}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <div className="font-mono font-black text-sm text-[var(--ui-brand-strong)]">
+                                  ${prod.salePrice.toFixed(2)}
+                                </div>
+                                <div className="text-[10px] text-[var(--ui-muted)]">por {unitShort}</div>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                            {promos.length > 0 && (
+                              <div className="space-y-1">
+                                {promos.slice(0, 2).map((promo, pIdx) => (
+                                  <button
+                                    key={`${prod.id}-promo-${pIdx}`}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedProductId(prod.id);
+                                      handleAddPromo(prod, promo);
+                                    }}
+                                    className="w-full py-1 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center justify-between gap-1 transition-colors cursor-pointer"
+                                  >
+                                    <span className="flex items-center gap-1 min-w-0 truncate">
+                                      <Tag className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">Combo {promo.label}</span>
+                                    </span>
+                                    <span className="text-[10px] underline shrink-0">+ Agregar</span>
+                                  </button>
+                                ))}
+                                {promos.length > 2 && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold text-right">
+                                    +{promos.length - 2} combo(s) más en detalle
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {filteredList.length > visibleList.length && (
+                      <div className="text-center text-[11px] text-[var(--ui-muted)] py-1.5 px-3 rounded-lg bg-[var(--ui-surface-muted)] border border-[var(--ui-border)]">
+                        Mostrando {visibleList.length} de {filteredList.length} productos — escribe en el buscador para encontrar cualquier producto y asignarlo a Granel.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -631,7 +715,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                       </span>
                     </button>
 
-                    <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2">
+                    <div className="bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-3.5 space-y-2.5">
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <span className="text-[10px] font-mono text-[var(--ui-muted)]">{selectedProduct.code}</span>
@@ -673,6 +757,53 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                           Disponible: <span className="font-mono font-bold">{selectedProduct.stock} {selectedUnitShort}</span>
                         </div>
                       )}
+
+                      {/* Manual Granel Category Assignment */}
+                      <div className="pt-2 border-t border-[var(--ui-border)] flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <label
+                            htmlFor="bulk-category-select"
+                            className="text-[11px] font-bold text-[var(--ui-secondary)]"
+                          >
+                            Categoría en Granel
+                          </label>
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              selectedCategoryOverride !== null
+                                ? 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)]'
+                                : selectedIsEligible
+                                ? 'bg-[var(--ui-surface-muted)] text-[var(--ui-muted)]'
+                                : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                            }`}
+                          >
+                            {selectedCategoryOverride !== null
+                              ? 'Manual'
+                              : selectedIsEligible
+                              ? 'Automático'
+                              : 'Fuera de Granel'}
+                          </span>
+                        </div>
+                        <select
+                          id="bulk-category-select"
+                          aria-label="Categoría en Granel"
+                          disabled={isSavingCategory}
+                          value={selectedCategoryOverride ?? 'auto'}
+                          onChange={(e) => handleChangeBulkCategory(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-lg text-xs font-semibold text-[var(--ui-text)] outline-none cursor-pointer disabled:opacity-60"
+                        >
+                          <option value="auto">
+                            {selectedAutoEligible && selectedAutoSubMeta
+                              ? `✨ Automático (${selectedAutoSubMeta.emoji} ${selectedAutoSubMeta.label})`
+                              : '✨ Automático (No está en Granel)'}
+                          </option>
+                          {ASSIGNABLE_BULK_SUBCATEGORIES.map((sub) => (
+                            <option key={sub.key} value={sub.key}>
+                              {sub.emoji} {sub.label}
+                            </option>
+                          ))}
+                          <option value="none">🚫 No mostrar en Granel</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* Named Multi-Combos Section (available on EVERY granel product) */}

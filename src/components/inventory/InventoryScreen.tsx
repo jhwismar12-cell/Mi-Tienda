@@ -42,6 +42,13 @@ import { ProviderSelectorField } from '../modals/ProviderSelectorField';
 import { useStoreProviders } from '../../utils/providers';
 import { formatCostPrice, parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { sounds } from '../../utils/audio';
+import {
+  ASSIGNABLE_BULK_SUBCATEGORIES,
+  BulkCategoryOverride,
+  applyBulkCategoryOverride,
+  parseBulkCategoryOverride,
+  stripBulkCategoryTag
+} from '../pos/bulkCategories';
 
 function looksLikeBarcode(query: string): boolean {
   const trimmed = query.trim();
@@ -131,6 +138,7 @@ export const InventoryScreen: React.FC = () => {
   const [editUnit, setEditUnit] = useState<string>('UNIDAD');
   const [editAllowFraction, setEditAllowFraction] = useState<boolean>(false);
   const [editDescription, setEditDescription] = useState<string>('');
+  const [editBulkCategory, setEditBulkCategory] = useState<'auto' | BulkCategoryOverride>('auto');
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [isDeletingProduct, setIsDeletingProduct] = useState(false);
   const { providers: editProviders, addLocalProvider: addLocalEditProvider } = useStoreProviders(
@@ -159,7 +167,8 @@ export const InventoryScreen: React.FC = () => {
     setEditCostPrice(formatCostPrice(product.costPrice));
     setEditUnit(product.unit || 'UNIDAD');
     setEditAllowFraction(Boolean(product.allowFraction));
-    setEditDescription(product.description || '');
+    setEditDescription(stripBulkCategoryTag(product.description));
+    setEditBulkCategory(parseBulkCategoryOverride(product.description) ?? 'auto');
   };
 
   const handleSaveProductEdit = async (e: React.FormEvent) => {
@@ -178,6 +187,10 @@ export const InventoryScreen: React.FC = () => {
     }
 
     const cleanBc = editBarcode.trim();
+    const nextDescription = applyBulkCategoryOverride(
+      editDescription.trim(),
+      editBulkCategory === 'auto' ? null : editBulkCategory
+    );
 
     await updateProduct(editProductModal.id, {
       name: cleanName,
@@ -188,7 +201,7 @@ export const InventoryScreen: React.FC = () => {
       barcode: cleanBc,
       unit: editUnit,
       allowFraction: editAllowFraction,
-      description: editDescription.trim() || ''
+      description: nextDescription
     });
 
     showToast(`Producto "${cleanName}" actualizado con éxito`);
@@ -1692,6 +1705,26 @@ export const InventoryScreen: React.FC = () => {
                     <span>Permite peso decimal</span>
                   </label>
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
+                  Categoría en Granel (POS)
+                </label>
+                <select
+                  aria-label="Categoría en Granel (POS)"
+                  value={editBulkCategory}
+                  onChange={(e) => setEditBulkCategory(e.target.value as 'auto' | BulkCategoryOverride)}
+                  className="w-full px-2.5 py-1.5 bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] rounded-lg text-xs font-semibold text-[var(--ui-text)] outline-none focus:border-[var(--ui-brand)]"
+                >
+                  <option value="auto">✨ Automático (según nombre/medida)</option>
+                  {ASSIGNABLE_BULK_SUBCATEGORIES.map((sub) => (
+                    <option key={sub.key} value={sub.key}>
+                      {sub.emoji} {sub.label}
+                    </option>
+                  ))}
+                  <option value="none">🚫 No mostrar en Granel</option>
+                </select>
               </div>
 
               <div>

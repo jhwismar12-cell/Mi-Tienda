@@ -9,6 +9,10 @@ export type BulkSubcategory =
   | 'papeleria'
   | 'otros';
 
+export type AssignableBulkSubcategory = Exclude<BulkSubcategory, 'all'>;
+
+export type BulkCategoryOverride = AssignableBulkSubcategory | 'none';
+
 export interface BulkSubcategoryMeta {
   key: BulkSubcategory;
   label: string;
@@ -24,6 +28,18 @@ export const BULK_SUBCATEGORIES: BulkSubcategoryMeta[] = [
   { key: 'papeleria', label: 'Papelería', emoji: '✏️' },
   { key: 'otros', label: 'Otros Granel', emoji: '🥚' }
 ];
+
+export const ASSIGNABLE_BULK_SUBCATEGORIES: Array<{
+  key: AssignableBulkSubcategory;
+  label: string;
+  emoji: string;
+}> = BULK_SUBCATEGORIES.filter(
+  (s): s is { key: AssignableBulkSubcategory; label: string; emoji: string } => s.key !== 'all'
+);
+
+export function getBulkSubcategoryMeta(key: BulkSubcategory): BulkSubcategoryMeta {
+  return BULK_SUBCATEGORIES.find((s) => s.key === key) || BULK_SUBCATEGORIES[0];
+}
 
 export interface ParsedPromo {
   name?: string;
@@ -69,6 +85,12 @@ const PRODUCE_RE =
 const PROMO_ITEM_RE =
   /Promo:\s*(?:([^()|—]+?)\s*\(\s*(\d+(?:[.,]\d+)?)\s*[xX×]\s*\$\s*(\d+(?:[.,]\d+)?)\s*\)|(\d+(?:[.,]\d+)?)\s*[xX×]\s*\$\s*(\d+(?:[.,]\d+)?))/gi;
 
+const BULK_CATEGORY_TAG_RE =
+  /\[Granel:\s*(verdes|granos_harinas|dulces|tabacos|papeleria|otros|none)\]/i;
+
+const BULK_CATEGORY_TAG_GLOBAL_RE =
+  /\s*\[Granel:\s*(?:verdes|granos_harinas|dulces|tabacos|papeleria|otros|none)\]\s*/gi;
+
 export function normalizeBulkText(value?: string): string {
   return (value || '')
     .normalize('NFD')
@@ -77,12 +99,38 @@ export function normalizeBulkText(value?: string): string {
     .trim();
 }
 
+export function parseBulkCategoryOverride(description?: string): BulkCategoryOverride | null {
+  if (!description) return null;
+  const match = description.match(BULK_CATEGORY_TAG_RE);
+  if (!match) return null;
+  return match[1].toLowerCase() as BulkCategoryOverride;
+}
+
+export function stripBulkCategoryTag(description?: string): string {
+  if (!description) return '';
+  return description
+    .replace(BULK_CATEGORY_TAG_GLOBAL_RE, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+export function applyBulkCategoryOverride(
+  description: string | undefined,
+  override: BulkCategoryOverride | null
+): string {
+  const base = stripBulkCategoryTag(description);
+  if (!override) return base;
+  const tag = `[Granel: ${override}]`;
+  return base ? `${base} ${tag}` : tag;
+}
+
 export function parsePromosFromDescription(description?: string): ParsedPromo[] {
-  if (!description) return [];
+  const cleanDescription = stripBulkCategoryTag(description);
+  if (!cleanDescription) return [];
   const promos: ParsedPromo[] = [];
   const regex = new RegExp(PROMO_ITEM_RE.source, 'gi');
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(description)) !== null) {
+  while ((match = regex.exec(cleanDescription)) !== null) {
     const rawName = match[1]?.trim();
     const rawQty = match[2] ?? match[4];
     const rawTotal = match[3] ?? match[5];
@@ -107,8 +155,9 @@ export function parsePromoFromDescription(description?: string): ParsedPromo | n
 }
 
 export function extractNoteFromDescription(description?: string): string {
-  if (!description) return '';
-  const withoutPromos = description
+  const cleanDescription = stripBulkCategoryTag(description);
+  if (!cleanDescription) return '';
+  const withoutPromos = cleanDescription
     .replace(new RegExp(PROMO_ITEM_RE.source, 'gi'), '')
     .replace(/\|/g, '')
     .replace(/^\s*[—–-]\s*/, '')
@@ -119,7 +168,8 @@ export function extractNoteFromDescription(description?: string): string {
 
 export function serializePromosToDescription(
   promos: ComboInput[],
-  note?: string
+  note?: string,
+  bulkCategoryOverride?: BulkCategoryOverride | null
 ): string | undefined {
   const validPromos = promos.filter(
     (p) => Number.isFinite(p.qty) && p.qty > 0 && Number.isFinite(p.total) && p.total > 0
@@ -137,22 +187,27 @@ export function serializePromosToDescription(
   });
 
   const promoSection = promoTokens.join(' | ');
-  const trimmedNote = (note || '').trim();
+  const trimmedNote = stripBulkCategoryTag(note);
 
+  let base = '';
   if (promoSection && trimmedNote) {
-    return `${promoSection} — ${trimmedNote}`;
+    base = `${promoSection} — ${trimmedNote}`;
+  } else if (promoSection) {
+    base = promoSection;
+  } else {
+    base = trimmedNote;
   }
-  if (promoSection) {
-    return promoSection;
-  }
-  return trimmedNote || undefined;
+
+  const withTag = applyBulkCategoryOverride(base, bulkCategoryOverride ?? null);
+  return withTag || undefined;
 }
 
 export function formatPromoDescription(
   qtyRaw: string | number,
   totalRaw: string | number,
   note?: string,
-  comboName?: string
+  comboName?: string,
+  bulkCategoryOverride?: BulkCategoryOverride | null
 ): string | undefined {
   const qty =
     typeof qtyRaw === 'number'
@@ -166,7 +221,8 @@ export function formatPromoDescription(
   const hasPromo = Number.isFinite(qty) && qty > 0 && Number.isFinite(total) && total > 0;
   return serializePromosToDescription(
     hasPromo ? [{ name: comboName, qty, total }] : [],
-    note
+    note,
+    bulkCategoryOverride
   );
 }
 
@@ -231,7 +287,7 @@ export function isStationeryProduct(
   );
 }
 
-export function isBulkEligibleProduct(prod: BulkProductLike): boolean {
+export function isBulkEligibleAuto(prod: BulkProductLike): boolean {
   if (isTobaccoProduct(prod)) return true;
   if (isCandyProduct(prod)) return true;
   if (isStationeryProduct(prod)) return true;
@@ -259,9 +315,16 @@ export function isBulkEligibleProduct(prod: BulkProductLike): boolean {
   );
 }
 
-export function classifyBulkSubcategory(
+export function isBulkEligibleProduct(prod: BulkProductLike): boolean {
+  const override = parseBulkCategoryOverride(prod.description);
+  if (override === 'none') return false;
+  if (override !== null) return true;
+  return isBulkEligibleAuto(prod);
+}
+
+export function classifyBulkSubcategoryAuto(
   prod: BulkProductLike
-): Exclude<BulkSubcategory, 'all'> {
+): AssignableBulkSubcategory {
   if (isTobaccoProduct(prod)) return 'tabacos';
   if (isCandyProduct(prod)) return 'dulces';
   if (isStationeryProduct(prod)) return 'papeleria';
@@ -287,4 +350,12 @@ export function classifyBulkSubcategory(
   }
 
   return 'otros';
+}
+
+export function classifyBulkSubcategory(
+  prod: BulkProductLike
+): AssignableBulkSubcategory {
+  const override = parseBulkCategoryOverride(prod.description);
+  if (override && override !== 'none') return override;
+  return classifyBulkSubcategoryAuto(prod);
 }
