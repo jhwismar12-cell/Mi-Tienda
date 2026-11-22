@@ -15,6 +15,11 @@ import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { canAutoFocusInput } from '../../utils/responsive';
 import { BulkProductCreateForm, isBulkEligibleProduct } from './BulkProductCreateForm';
+import {
+  BULK_SUBCATEGORIES,
+  BulkSubcategory,
+  classifyBulkSubcategory
+} from './bulkCategories';
 
 export interface ParsedPromo {
   qty: number;
@@ -48,6 +53,7 @@ interface BulkSaleModalProps {
 export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose }) => {
   const { products, addProductToCart, setActiveScreen } = useStore();
   const [tab, setTab] = useState<'bulk' | 'all_unbarcoded'>('bulk');
+  const [bulkSubcategory, setBulkSubcategory] = useState<BulkSubcategory>('all');
   const [search, setSearch] = useState('');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [mobileStep, setMobileStep] = useState<'list' | 'detail'>('list');
@@ -68,12 +74,30 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
     return products.filter(p => !p.barcode || p.barcode.trim() === '');
   }, [products]);
 
+  // Include all bulk-eligible & tobacco products (even if they also have a barcode, e.g. Lenteja or Lark Entera)
   const bulkProducts = useMemo(() => {
-    return unbarcodedProducts.filter(isBulkEligibleProduct);
-  }, [unbarcodedProducts]);
+    return products.filter(isBulkEligibleProduct);
+  }, [products]);
+
+  const subcategoryCounts = useMemo(() => {
+    const counts: Record<BulkSubcategory, number> = {
+      all: bulkProducts.length,
+      verdes: 0,
+      granos_harinas: 0,
+      tabacos: 0,
+      otros: 0
+    };
+    for (const p of bulkProducts) {
+      counts[classifyBulkSubcategory(p)] += 1;
+    }
+    return counts;
+  }, [bulkProducts]);
 
   const filteredList = useMemo(() => {
-    const base = tab === 'bulk' ? bulkProducts : unbarcodedProducts;
+    let base = tab === 'bulk' ? bulkProducts : unbarcodedProducts;
+    if (tab === 'bulk' && bulkSubcategory !== 'all') {
+      base = base.filter(p => classifyBulkSubcategory(p) === bulkSubcategory);
+    }
     const q = search.trim().toLowerCase();
     const matched = !q
       ? base
@@ -90,7 +114,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
       if (aHas !== bHas) return bHas - aHas;
       return a.name.localeCompare(b.name);
     });
-  }, [tab, bulkProducts, unbarcodedProducts, search]);
+  }, [tab, bulkSubcategory, bulkProducts, unbarcodedProducts, search]);
 
   const selectedProduct: Product | null = useMemo(() => {
     if (!filteredList.length) return null;
@@ -104,6 +128,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
   useEffect(() => {
     if (!isOpen) return;
     setSearch('');
+    setBulkSubcategory('all');
     setMobileStep('list');
     setIsCreateMode(false);
     setCreateInitialName('');
@@ -217,7 +242,7 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
             </div>
             <div>
               <h2 className="font-bold text-sm sm:text-base leading-tight">
-                Venta a Granel, Peso y Productos sin Código de Barras
+                Granel, Productos Verdes, Granos y Tabacos
               </h2>
               <p className="text-[11px] text-white/70">
                 Vende por libra, galón, unidades sueltas, valor en dólares o combos rápidos
@@ -249,12 +274,15 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
         {isCreateMode ? (
           <BulkProductCreateForm
             initialName={createInitialName}
+            initialGroup={bulkSubcategory}
             onCancel={() => {
               setIsCreateMode(false);
               setCreateInitialName('');
             }}
             onCreated={(created) => {
-              setTab(isBulkEligibleProduct(created) ? 'bulk' : 'all_unbarcoded');
+              const eligible = isBulkEligibleProduct(created);
+              setTab(eligible ? 'bulk' : 'all_unbarcoded');
+              setBulkSubcategory(eligible ? classifyBulkSubcategory(created) : 'all');
               setSearch('');
               setSelectedProductId(created.id);
               setIsCreateMode(false);
@@ -266,52 +294,89 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
           <>
         {/* Search & Tabs */}
         <div
-          className={`p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center shrink-0 ${
+          className={`p-3 sm:p-4 border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] flex-col gap-2.5 shrink-0 ${
             mobileStep === 'detail' ? 'hidden lg:flex' : 'flex'
           }`}
         >
-          <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0">
-            <button
-              onClick={() => setTab('bulk')}
-              className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate ${
-                tab === 'bulk'
-                  ? 'bg-[var(--ui-brand)] text-white shadow-xs'
-                  : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
-              }`}
-            >
-              ⚖️ Granel y Combos ({bulkProducts.length})
-            </button>
-            <button
-              onClick={() => setTab('all_unbarcoded')}
-              className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate ${
-                tab === 'all_unbarcoded'
-                  ? 'bg-[var(--ui-brand)] text-white shadow-xs'
-                  : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
-              }`}
-            >
-              📦 Todos sin Código ({unbarcodedProducts.length})
-            </button>
+          <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center">
+            <div className="flex bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-1 gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setTab('bulk')}
+                className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate cursor-pointer ${
+                  tab === 'bulk'
+                    ? 'bg-[var(--ui-brand)] text-white shadow-xs'
+                    : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
+                }`}
+              >
+                ⚖️ Granel y Tabacos ({bulkProducts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('all_unbarcoded')}
+                className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors truncate cursor-pointer ${
+                  tab === 'all_unbarcoded'
+                    ? 'bg-[var(--ui-brand)] text-white shadow-xs'
+                    : 'text-[var(--ui-secondary)] hover:text-[var(--ui-text)]'
+                }`}
+              >
+                📦 Todos sin Código ({unbarcodedProducts.length})
+              </button>
+            </div>
+
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar arroz, tomate, huevo, maduro, lenteja, limón..."
+                className="w-full pl-9 pr-8 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl text-sm text-[var(--ui-text)] outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-2.5 text-[var(--ui-muted)] hover:text-[var(--ui-text)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-[var(--ui-muted)] absolute left-3 top-2.5" />
-            <input
-              ref={searchRef}
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar arroz, tomate, huevo, maduro, lenteja, limón..."
-              className="w-full pl-9 pr-8 py-2 bg-[var(--ui-surface)] border border-[var(--ui-border)] focus:border-[var(--ui-brand)] rounded-xl text-sm text-[var(--ui-text)] outline-none"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="absolute right-2.5 top-2.5 text-[var(--ui-muted)] hover:text-[var(--ui-text)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+          {/* Subcategory filter pills for Granel */}
+          {tab === 'bulk' && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="Categorías de granel">
+              {BULK_SUBCATEGORIES.filter(
+                (sub) => sub.key !== 'otros' || subcategoryCounts.otros > 0
+              ).map((sub) => {
+                const active = bulkSubcategory === sub.key;
+                const count = subcategoryCounts[sub.key];
+                return (
+                  <button
+                    key={sub.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setBulkSubcategory(sub.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                      active
+                        ? 'bg-[var(--ui-brand)] text-white border-[var(--ui-brand)] shadow-xs'
+                        : 'bg-[var(--ui-surface)] text-[var(--ui-secondary)] border-[var(--ui-border)] hover:border-[var(--ui-brand)] hover:text-[var(--ui-text)]'
+                    }`}
+                  >
+                    <span>{sub.emoji}</span>
+                    <span>{sub.label}</span>
+                    <span className={`font-mono text-[10px] ${active ? 'opacity-90' : 'opacity-70'}`}>
+                      ({count})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Content Split */}
@@ -347,6 +412,10 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                   const unitShort = formatUnitShort(prod.unit);
                   const isSelected = selectedProduct?.id === prod.id;
                   const outOfStock = prod.stock <= 0;
+                  const subMeta =
+                    tab === 'bulk' && bulkSubcategory === 'all'
+                      ? BULK_SUBCATEGORIES.find(s => s.key === classifyBulkSubcategory(prod))
+                      : undefined;
 
                   return (
                     <div
@@ -370,6 +439,11 @@ export const BulkSaleModal: React.FC<BulkSaleModalProps> = ({ isOpen, onClose })
                             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--ui-surface-muted)] border border-[var(--ui-border)] text-[var(--ui-secondary)] font-semibold uppercase">
                               {prod.unit || 'UNIDAD'}
                             </span>
+                            {subMeta && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] font-semibold">
+                                {subMeta.emoji} {subMeta.label}
+                              </span>
+                            )}
                             {outOfStock ? (
                               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)]">
                                 Stock: 0

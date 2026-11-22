@@ -2111,3 +2111,97 @@ test('OrderPlannerScreen supports 1-tap green / 2-tap red on scheduled package i
   );
   assert.equal(receivedOrderArgs?.[0], 88);
 });
+
+test('PosScreen hides Por Proveedor controls and BulkSaleModal filters Tabacos, Productos Verdes, and Granos y Harinas', async (t) => {
+  const catalog: BackendProduct[] = [
+    {
+      id_producto: 201, id_categoria: 1, categoria_nombre: 'Abarrotes', id_proveedor: 2, proveedor_nombre: 'Pinos Cevallos',
+      codigo_interno: 'AUT-893004', nombre: 'LARK ENTERA X 20', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.35, precio_venta_actual: 0.45, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 10, permite_fraccion: false, activo: true, codigos_barras: ['7861000001']
+    },
+    {
+      id_producto: 202, id_categoria: 1, categoria_nombre: 'Abarrotes',
+      codigo_interno: 'GRN-LEN-LIB', nombre: 'Lenteja', unidad_medida: 'LIBRA',
+      precio_compra_actual: 0.35, precio_venta_actual: 0.50, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 8, permite_fraccion: true, activo: true, codigos_barras: ['7862101145409']
+    },
+    {
+      id_producto: 203, id_categoria: 1, categoria_nombre: 'Abarrotes',
+      codigo_interno: 'GRN-HAR-LIB', nombre: 'Harina', unidad_medida: 'LIBRA',
+      precio_compra_actual: 0.40, precio_venta_actual: 0.55, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 6, permite_fraccion: true, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 204, id_categoria: 8, categoria_nombre: 'Frutas y Verduras',
+      codigo_interno: 'FRV-TOM-LIB', nombre: 'Tomate', unidad_medida: 'LIBRA',
+      precio_compra_actual: 0.30, precio_venta_actual: 0.50, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 12, permite_fraccion: true, activo: true, codigos_barras: []
+    },
+    {
+      id_producto: 205, id_categoria: 8, categoria_nombre: 'Frutas y Verduras',
+      codigo_interno: 'AUT-563986', nombre: 'PAÑOS MULTIUSOS MASTER LIMON', unidad_medida: 'UNIDAD',
+      precio_compra_actual: 0.25, precio_venta_actual: 0.40, margen_minimo_porcentaje: 20,
+      stock_minimo: 5, stock_actual: 4, permite_fraccion: false, activo: true, codigos_barras: []
+    }
+  ];
+  t.mock.method(api, 'getProductos', async () => catalog);
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  await act(async () => {
+    await store.refreshProducts();
+    renderer.update(<StoreProvider><Probe /><PosScreen /></StoreProvider>);
+  });
+
+  // 1. PosScreen must NOT render Por Proveedor button or Proveedores filter strip
+  const allPosButtons = renderer.root.findAllByType('button').map(b => textOf(b));
+  assert.ok(!allPosButtons.some(txt => txt.includes('Por Proveedor')), 'Por Proveedor button must be removed from PosScreen');
+  assert.ok(!textOf(renderer.toJSON()).includes('Proveedores:'), 'Quick supplier filter strip must be removed from PosScreen');
+
+  // 2. BulkSaleModal splits Tabacos, Productos Verdes, and Granos y Harinas and excludes packaged noise
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => {}} /></StoreProvider>);
+  });
+
+  const modalTextAll = textOf(renderer.toJSON());
+  assert.ok(modalTextAll.includes('LARK ENTERA X 20'), 'Barcoded tobacco must appear in Granel');
+  assert.ok(modalTextAll.includes('Lenteja'), 'Barcoded Lenteja must appear in Granel');
+  assert.ok(modalTextAll.includes('Harina'), 'Harina must appear in Granel');
+  assert.ok(modalTextAll.includes('Tomate'), 'Tomate must appear in Granel');
+  assert.ok(!modalTextAll.includes('PAÑOS MULTIUSOS MASTER LIMON'), 'Packaged noise must be excluded from Granel');
+
+  const clickTab = async (label: string) => {
+    const tabBtn = renderer.root.findAllByType('button').find(b => b.props.role === 'tab' && textOf(b).includes(label));
+    assert.ok(tabBtn, `Expected bulk subcategory tab ${label}`);
+    await act(async () => {
+      tabBtn.props.onClick();
+    });
+  };
+
+  const visibleCardTitles = () =>
+    renderer.root
+      .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+      .map(n => textOf(n));
+
+  await clickTab('Tabacos');
+  let cards = visibleCardTitles();
+  assert.equal(cards.length, 1);
+  assert.ok(cards[0].includes('LARK ENTERA X 20'));
+
+  await clickTab('Granos y Harinas');
+  cards = visibleCardTitles();
+  assert.equal(cards.length, 2);
+  assert.ok(cards.some(c => c.includes('Lenteja')));
+  assert.ok(cards.some(c => c.includes('Harina')));
+
+  await clickTab('Productos Verdes');
+  cards = visibleCardTitles();
+  assert.equal(cards.length, 1);
+  assert.ok(cards[0].includes('Tomate'));
+});

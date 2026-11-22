@@ -6,6 +6,9 @@ import { useStoreCategories } from '../../utils/categories';
 import { useStoreProviders } from '../../utils/providers';
 import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
+import { BulkSubcategory, isBulkEligibleProduct } from './bulkCategories';
+
+export { isBulkEligibleProduct };
 
 export function formatPromoDescription(
   qtyRaw: string | number,
@@ -30,29 +33,16 @@ export function formatPromoDescription(
   return trimmedNote || undefined;
 }
 
-export function isBulkEligibleProduct(prod: Pick<Product, 'unit' | 'allowFraction' | 'category' | 'description'>): boolean {
-  const unit = (prod.unit || '').toUpperCase();
-  const hasPromo = Boolean(
-    prod.description && /Promo:\s*\d+\s*[xX×]\s*\$\s*\d+(?:[.,]\d+)?/i.test(prod.description)
-  );
-  return (
-    Boolean(prod.allowFraction) ||
-    unit === 'LIBRA' ||
-    unit === 'KG' ||
-    unit === 'GALON' ||
-    prod.category === 'Frutas y Verduras' ||
-    hasPromo
-  );
-}
-
 interface BulkProductCreateFormProps {
   initialName?: string;
+  initialGroup?: BulkSubcategory;
   onCancel: () => void;
   onCreated: (product: Product) => void;
 }
 
 export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
   initialName = '',
+  initialGroup = 'all',
   onCancel,
   onCreated
 }) => {
@@ -60,12 +50,19 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
   const categories = useStoreCategories(true, products);
   const { providers, addLocalProvider } = useStoreProviders(true, products);
 
+  const defaultCat =
+    initialGroup === 'verdes' && categories.includes('Frutas y Verduras')
+      ? 'Frutas y Verduras'
+      : categories[0] || 'Abarrotes';
+
   const [name, setName] = useState(initialName);
-  const [category, setCategory] = useState<string>(categories[0] || 'Abarrotes');
+  const [category, setCategory] = useState<string>(defaultCat);
   const [providerId, setProviderId] = useState<number | undefined>(undefined);
   const [distributor, setDistributor] = useState<string | undefined>(undefined);
-  const [unit, setUnit] = useState<'UNIDAD' | 'LIBRA' | 'KG' | 'GALON'>('UNIDAD');
-  const [allowFraction, setAllowFraction] = useState(false);
+  const [unit, setUnit] = useState<'UNIDAD' | 'LIBRA' | 'KG' | 'GALON'>(
+    initialGroup === 'granos_harinas' ? 'LIBRA' : 'UNIDAD'
+  );
+  const [allowFraction, setAllowFraction] = useState(initialGroup === 'granos_harinas');
   const [salePrice, setSalePrice] = useState('0.50');
   const [costPrice, setCostPrice] = useState('0.00');
   const [stock, setStock] = useState('0');

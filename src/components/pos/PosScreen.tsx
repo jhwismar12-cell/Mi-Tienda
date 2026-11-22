@@ -28,11 +28,6 @@ import {
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { BulkSaleModal, formatUnitShort } from './BulkSaleModal';
-import {
-  SupplierSearchModal,
-  buildSupplierGroups,
-  ALL_SUPPLIERS_KEY
-} from './SupplierSearchModal';
 import { BarcodeCameraModal } from '../modals/BarcodeCameraModal';
 import { canAutoFocusInput } from '../../utils/responsive';
 
@@ -77,15 +72,11 @@ export const PosScreen: React.FC = () => {
 
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
-  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
-  const [initialSupplierFilter, setInitialSupplierFilter] = useState<string | null>(null);
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const [lastScannedFeedback, setLastScannedFeedback] = useState<string | null>(null);
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const paymentSectionRef = useRef<HTMLDivElement>(null);
-
-  const supplierGroups = useMemo(() => buildSupplierGroups(products), [products]);
 
   const parsedSearchInput = useMemo(() => {
     const raw = barcodeInput.trim();
@@ -119,11 +110,6 @@ export const PosScreen: React.FC = () => {
       .slice(0, 8);
   }, [products, parsedSearchInput.query]);
 
-  const openSupplierModal = (supplierKey?: string | null) => {
-    setInitialSupplierFilter(supplierKey || ALL_SUPPLIERS_KEY);
-    setIsSupplierModalOpen(true);
-  };
-
   // Calculations
   const totalArticles = cart.length;
   const totalUnits = Number(cart.reduce((sum, item) => sum + item.quantity, 0).toFixed(3));
@@ -150,7 +136,6 @@ export const PosScreen: React.FC = () => {
 
   const anyModalOpen =
     isBulkModalOpen ||
-    isSupplierModalOpen ||
     isCameraScannerOpen ||
     isOpenShiftModalOpen ||
     isAltaAlVueloOpen ||
@@ -201,10 +186,6 @@ export const PosScreen: React.FC = () => {
       } else if (e.key === 'F6') {
         e.preventDefault();
         setIsBulkModalOpen(prev => !prev);
-      } else if (e.key === 'F7') {
-        e.preventDefault();
-        setInitialSupplierFilter(ALL_SUPPLIERS_KEY);
-        setIsSupplierModalOpen(prev => !prev);
       }
     };
 
@@ -327,7 +308,7 @@ export const PosScreen: React.FC = () => {
                   setSearchHighlightIdx(-1);
                 }
               }}
-              placeholder="Buscar por nombre, proveedor o código (ej. dipor, 0.5*código)..."
+              placeholder="Buscar por nombre o código (ej. 0.5*código)..."
               aria-label="Buscar por nombre, proveedor, código de barras y cantidad"
               className="pos-scanner w-full pl-11 pr-36 lg:pr-44 py-3.5 bg-[var(--ui-surface)] border-2 border-[var(--ui-border)] focus:border-[var(--ui-brand)] focus:ring-2 focus:ring-[var(--ui-brand)]/20 rounded-lg font-mono text-sm text-[var(--ui-text)] shadow-sm transition-all outline-none placeholder:font-sans placeholder:text-[var(--ui-subtle)]"
             />
@@ -413,57 +394,21 @@ export const PosScreen: React.FC = () => {
             )}
           </form>
 
-          <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => openSupplierModal(ALL_SUPPLIERS_KEY)}
-              className="px-3 sm:px-3.5 py-3 min-h-[44px] bg-[var(--ui-chrome)] hover:bg-[var(--ui-chrome-raised)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
-              title="Buscar y vender productos agrupados por proveedor (F7)"
-            >
-              <Truck className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
-              <span className="truncate">Por Proveedor</span>
-              <span className="hidden lg:inline font-mono text-[10px] bg-white/15 px-1.5 py-0.5 rounded font-bold">
-                [F7]
-              </span>
-            </button>
-
+          <div className="flex gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setIsBulkModalOpen(true)}
-              className="px-3 sm:px-3.5 py-3 min-h-[44px] bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
-              title="Vender por peso, valor en dólares o productos sin código (F6)"
+              className="w-full sm:w-auto px-3.5 sm:px-4 py-3 min-h-[44px] bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+              title="Vender granel, productos verdes, granos y harinas, tabacos o sin código (F6)"
             >
               <Scale className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
-              <span className="truncate">Granel / Sin Cód.</span>
+              <span className="truncate">Granel / Tabacos</span>
               <span className="hidden lg:inline font-mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded font-bold">
                 [F6]
               </span>
             </button>
           </div>
         </div>
-
-        {/* Quick Supplier Filter Strip */}
-        {supplierGroups.length > 1 && (
-          <div className="mb-3 flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ui-muted)] flex items-center gap-1 shrink-0 mr-1">
-              <Truck className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
-              <span>Proveedores:</span>
-            </span>
-            {supplierGroups.map((group) => (
-              <button
-                key={group.key}
-                type="button"
-                onClick={() => openSupplierModal(group.key)}
-                className="px-2.5 py-1 rounded-full bg-[var(--ui-surface)] hover:bg-[var(--ui-brand)] hover:text-white hover:border-[var(--ui-brand)] border border-[var(--ui-border)] text-[11px] font-semibold text-[var(--ui-secondary)] transition-colors shrink-0 flex items-center gap-1.5 shadow-2xs cursor-pointer"
-              >
-                <span className="truncate max-w-[160px]">
-                  {group.key === ALL_SUPPLIERS_KEY ? 'Todos' : group.label}
-                </span>
-                <span className="font-mono text-[10px] opacity-75">({group.count})</span>
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Quick Access Bar (F1, F2, F4, F8) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
@@ -1087,15 +1032,6 @@ export const PosScreen: React.FC = () => {
         isOpen={isBulkModalOpen}
         onClose={() => {
           setIsBulkModalOpen(false);
-          if (canAutoFocusInput()) barcodeInputRef.current?.focus();
-        }}
-      />
-
-      <SupplierSearchModal
-        isOpen={isSupplierModalOpen}
-        initialSupplier={initialSupplierFilter}
-        onClose={() => {
-          setIsSupplierModalOpen(false);
           if (canAutoFocusInput()) barcodeInputRef.current?.focus();
         }}
       />
