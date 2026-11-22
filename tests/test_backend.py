@@ -1090,6 +1090,54 @@ class TestTiendaBackend(unittest.TestCase):
         all_after = {p["id_producto"]: p for p in self.client.get("/api/productos").json()}
         self.assertAlmostEqual(all_after[pid]["precio_compra_actual"], 1.3043, places=4)
 
+    def test_31_kardex_pvp_y_eliminar_retiro_caja(self):
+        # Ensure active cash session
+        if not self.client.get("/api/caja/activa").json():
+            open_res = self.client.post("/api/caja/abrir", json={"monto_inicial": 30.0, "id_usuario": 1})
+            self.assertEqual(open_res.status_code, 200)
+        shift_before = self.client.get("/api/caja/activa").json()
+        expected_before = float(shift_before["total_esperado"])
+        retiros_before = float(shift_before["total_retiros"])
+
+        # 1. Register a cash withdrawal for purchases ($12.50)
+        ret_res = self.client.post("/api/caja/movimiento", json={
+            "tipo": "RETIRO",
+            "monto": 12.50,
+            "descripcion": "Compra de mercadería"
+        })
+        self.assertEqual(ret_res.status_code, 200)
+        shift_after_ret = ret_res.json()
+        self.assertAlmostEqual(shift_after_ret["total_retiros"], retiros_before + 12.50, places=2)
+        self.assertAlmostEqual(shift_after_ret["total_esperado"], expected_before - 12.50, places=2)
+
+        # Find the created withdrawal movement ID (c-<id>)
+        mov = next((m for m in shift_after_ret["movimientos"] if m["tipo"] == "RETIRO" and m["descripcion"] == "Compra de mercadería"), None)
+        self.assertIsNotNone(mov)
+        mov_id = int(mov["id"].replace("c-", ""))
+
+        # 2. Delete the withdrawal and verify caja balances back cleanly
+        del_res = self.client.delete(f"/api/caja/movimiento/{mov_id}")
+        self.assertEqual(del_res.status_code, 200)
+        shift_restored = del_res.json()
+        self.assertAlmostEqual(shift_restored["total_retiros"], retiros_before, places=2)
+        self.assertAlmostEqual(shift_restored["total_esperado"], expected_before, places=2)
+
+        # 3. Verify Kardex returns precio_venta_unitario on sale & non-sale movements
+        prod = self.client.get("/api/productos/buscar?query=BEB-COC-3000").json()["producto"]
+        pid = prod["id_producto"]
+        sale_res = self.client.post("/api/ventas/cobrar", json={
+            "metodo_pago": "EFECTIVO",
+            "monto_recibido": 10.0,
+            "items": [{"id_producto": pid, "cantidad": 2.0, "precio_unitario": 2.75}]
+        })
+        self.assertEqual(sale_res.status_code, 200)
+
+        kardex = self.client.get(f"/api/inventario/kardex/{pid}").json()
+        self.assertGreater(len(kardex), 0)
+        latest = kardex[0]
+        self.assertIn("precio_venta_unitario", latest)
+        self.assertAlmostEqual(float(latest["precio_venta_unitario"]), 2.75, places=2)
+
 if __name__ == "__main__":
     unittest.main()
 

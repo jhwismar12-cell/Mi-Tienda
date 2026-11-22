@@ -34,6 +34,11 @@ export const CashMovementModal: React.FC = () => {
     }
   };
 
+  const quickReasons =
+    type === 'RETIRO'
+      ? ['Compra de mercadería', 'Pago a proveedor', 'Gasto operativo / bolsas', 'Retiro de efectivo']
+      : ['Aporte de cambio / sueltos', 'Fondo adicional'];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
       <div className="bg-[var(--ui-surface)] rounded-2xl border border-[var(--ui-border)] shadow-2xl max-w-sm w-full overflow-hidden flex flex-col">
@@ -105,6 +110,22 @@ export const CashMovementModal: React.FC = () => {
             <label className="block font-semibold text-[var(--ui-secondary)] mb-1">
               Concepto / Motivo
             </label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {quickReasons.map((reason) => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => setDescription(reason)}
+                  className={`px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
+                    description === reason
+                      ? 'bg-[var(--ui-brand-soft)] border-[var(--ui-brand)] text-[var(--ui-brand-strong)]'
+                      : 'bg-[var(--ui-surface-muted)] border-[var(--ui-border)] text-[var(--ui-secondary)] hover:border-[var(--ui-brand)]'
+                  }`}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
             <input
               type="text"
               required

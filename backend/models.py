@@ -273,6 +273,8 @@ class KardexMovimientoOut(BaseModel):
     cantidad: float
     stock_anterior: float
     stock_posterior: float
+    costo_unitario: Optional[float] = None
+    precio_venta_unitario: Optional[float] = None
     referencia_id: Optional[str] = None
     id_usuario: int
     usuario_nombre: Optional[str] = None

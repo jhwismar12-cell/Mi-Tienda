@@ -399,10 +399,10 @@ export const PosScreen: React.FC = () => {
               type="button"
               onClick={() => setIsBulkModalOpen(true)}
               className="w-full sm:w-auto px-3.5 sm:px-4 py-3 min-h-[44px] bg-[var(--ui-brand)] hover:bg-[var(--ui-brand-hover)] text-white rounded-lg font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
-              title="Vender granel, productos verdes, granos y harinas, tabacos o sin código (F6)"
+              title="Vender granel, productos verdes, granos y harinas, tabacos, papelería y combos (F6)"
             >
               <Scale className="w-4 h-4 text-[var(--ui-mint)] shrink-0" />
-              <span className="truncate">Granel / Tabacos</span>
+              <span className="truncate">Granel / Combos</span>
               <span className="hidden lg:inline font-mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded font-bold">
                 [F6]
               </span>

@@ -26,7 +26,8 @@ import {
   Ban,
   Calendar,
   Award,
-  History
+  History,
+  Trash2
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { api, BackendCashSession, BackendDashboard } from '../../services/api';
@@ -47,6 +48,7 @@ export const DashboardScreen: React.FC = () => {
     updateInitialCash,
     closeShiftAndGenerateReport,
     setIsCashMovementModalOpen,
+    deleteCashMovement,
     setLastCompletedSale,
     setIsReceiptModalOpen,
     voidSale,
@@ -272,16 +274,19 @@ export const DashboardScreen: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
+              type="button"
+              disabled={!cashShift.isOpen}
               onClick={() => setIsCashMovementModalOpen(true)}
-              className="bg-[var(--ui-surface)] border border-[var(--ui-border)] hover:bg-[var(--ui-surface-hover)] text-[var(--ui-text)] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed text-[var(--ui-danger-text)] px-3.5 py-2 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              title={cashShift.isOpen ? 'Registrar retiro de efectivo para compras o ingreso extra' : 'Abre la caja primero para registrar retiros'}
             >
-              <Plus className="w-3.5 h-3.5 text-[var(--ui-brand-strong)]" />
-              <span>Registrar Retiro / Pago</span>
+              <ArrowDownRight className="w-4 h-4 shrink-0" />
+              <span>Retirar Dinero / Movimiento</span>
             </button>
 
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[var(--ui-warning-bg)] text-[var(--ui-warning-text)] border border-[var(--ui-warning-border)] rounded-lg text-xs font-bold shadow-2xs">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--ui-warning-bg)] text-[var(--ui-warning-text)] border border-[var(--ui-warning-border)] rounded-lg text-xs font-bold shadow-2xs">
               <AlertTriangle className="w-3.5 h-3.5" />
               <span>{outOfStockCount > 0 ? `${outOfStockCount} Alertas de Stock` : 'Turno Normal'}</span>
             </span>
@@ -444,11 +449,32 @@ export const DashboardScreen: React.FC = () => {
                 </div>
 
                 <div className="flex justify-between items-center text-[var(--ui-secondary)]">
-                  <span>Retiros / Pagos (-):</span>
-                  <span className="font-mono font-bold text-[var(--ui-danger-text)]">
+                  <div className="flex items-center gap-2">
+                    <span>Retiros / Pagos (-):</span>
+                    <button
+                      type="button"
+                      disabled={!cashShift.isOpen}
+                      onClick={() => setIsCashMovementModalOpen(true)}
+                      className="inline-flex items-center gap-1 text-[11px] text-[var(--ui-danger-text)] bg-[var(--ui-danger-bg)] hover:opacity-90 border border-[var(--ui-danger-border)] disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5 rounded font-bold transition-all cursor-pointer"
+                      title="Registrar retiro de dinero de la gaveta (para compras, proveedores o gastos)"
+                    >
+                      <Minus className="w-3 h-3" />
+                      <span>Retirar dinero</span>
+                    </button>
+                  </div>
+                  <span className="font-mono font-bold text-sm text-[var(--ui-danger-text)]">
                     $ {cashShift.withdrawalsTotal.toFixed(2)}
                   </span>
                 </div>
+
+                {cashShift.depositsTotal > 0 && (
+                  <div className="flex justify-between items-center text-[var(--ui-secondary)]">
+                    <span>Ingresos Extra (+):</span>
+                    <span className="font-mono font-bold text-[var(--ui-brand-strong)]">
+                      $ {cashShift.depositsTotal.toFixed(2)}
+                    </span>
+                  </div>
+                )}
 
                 <div className="border-t border-[var(--ui-border)] pt-2.5 mt-2 flex justify-between items-center font-bold text-sm md:text-base">
                   <span className="text-[var(--ui-text)]">Efectivo Esperado:</span>
@@ -552,10 +578,21 @@ export const DashboardScreen: React.FC = () => {
             </div>
 
             {/* Quick Session Details & Cash Breakdown */}
-            <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-5 shadow-xs">
-              <h3 className="font-bold text-sm text-[var(--ui-text)] mb-3">
-                Desglose de Movimientos del Turno
-              </h3>
+            <div className="surface-card bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-bold text-sm text-[var(--ui-text)]">
+                  Desglose de Movimientos del Turno
+                </h3>
+                <button
+                  type="button"
+                  disabled={!cashShift.isOpen}
+                  onClick={() => setIsCashMovementModalOpen(true)}
+                  className="px-2.5 py-1 rounded-lg bg-[var(--ui-danger-bg)] border border-[var(--ui-danger-border)] text-[var(--ui-danger-text)] disabled:opacity-40 text-[11px] font-bold flex items-center gap-1 cursor-pointer hover:opacity-90"
+                >
+                  <ArrowDownRight className="w-3.5 h-3.5" />
+                  <span>Retirar dinero</span>
+                </button>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div className="p-3 bg-[var(--ui-surface-muted)] rounded-lg border border-[var(--ui-border)]">
                   <div className="text-[var(--ui-muted)] font-medium">Apertura</div>
@@ -585,6 +622,76 @@ export const DashboardScreen: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Detailed list of cash withdrawals & extra deposits in active shift */}
+              {(() => {
+                const manualMovs = cashShift.movements.filter(
+                  (m) => m.type === 'RETIRO' || m.type === 'INGRESO'
+                );
+                if (manualMovs.length === 0) {
+                  return (
+                    <p className="text-[11px] text-[var(--ui-muted)] pt-1 border-t border-[var(--ui-border)]">
+                      Sin retiros ni ingresos manuales registrados en este turno. Cada retiro registrado aquí se descuenta automáticamente del <strong>Efectivo Esperado</strong> para que la caja cuadre.
+                    </p>
+                  );
+                }
+                return (
+                  <div className="pt-3 border-t border-[var(--ui-border)] space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--ui-muted)]">
+                      Retiros e Ingresos Manuales del Turno ({manualMovs.length})
+                    </div>
+                    <div className="divide-y divide-[var(--ui-border)] rounded-lg border border-[var(--ui-border)] overflow-hidden bg-[var(--ui-surface-muted)]/40">
+                      {manualMovs.map((m) => {
+                        const isRetiro = m.type === 'RETIRO';
+                        return (
+                          <div
+                            key={m.id}
+                            className="px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold shrink-0 ${
+                                  isRetiro
+                                    ? 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-text)] border border-[var(--ui-danger-border)]'
+                                    : 'bg-[var(--ui-brand-soft)] text-[var(--ui-brand-strong)] border border-[var(--ui-brand-soft-border)]'
+                                }`}
+                              >
+                                {isRetiro ? 'RETIRO' : 'INGRESO'}
+                              </span>
+                              <span className="font-mono text-[11px] text-[var(--ui-muted)] shrink-0">
+                                {m.time}
+                              </span>
+                              <span className="font-semibold text-[var(--ui-text)] truncate">
+                                {m.description}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`font-mono font-bold ${
+                                  isRetiro ? 'text-[var(--ui-danger-text)]' : 'text-[var(--ui-brand-strong)]'
+                                }`}
+                              >
+                                {isRetiro ? '-' : '+'}${m.amount.toFixed(2)}
+                              </span>
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => deleteCashMovement(m.id)}
+                                  title="Eliminar movimiento y recalcular caja"
+                                  aria-label={`Eliminar movimiento ${m.description}`}
+                                  className="p-1 rounded text-[var(--ui-muted)] hover:text-[var(--ui-danger-text)] hover:bg-[var(--ui-danger-bg)] transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

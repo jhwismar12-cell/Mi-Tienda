@@ -6,32 +6,13 @@ import { useStoreCategories } from '../../utils/categories';
 import { useStoreProviders } from '../../utils/providers';
 import { parseDecimalInput, roundCostPrice } from '../../utils/currency';
 import { ProviderSelectorField } from '../modals/ProviderSelectorField';
-import { BulkSubcategory, isBulkEligibleProduct } from './bulkCategories';
+import {
+  BulkSubcategory,
+  formatPromoDescription,
+  isBulkEligibleProduct
+} from './bulkCategories';
 
-export { isBulkEligibleProduct };
-
-export function formatPromoDescription(
-  qtyRaw: string | number,
-  totalRaw: string | number,
-  note?: string
-): string | undefined {
-  const qty = typeof qtyRaw === 'number' ? qtyRaw : parseInt(String(qtyRaw).trim(), 10);
-  const total =
-    typeof totalRaw === 'number'
-      ? totalRaw
-      : parseFloat(String(totalRaw).trim().replace(',', '.'));
-
-  const hasPromo = Number.isFinite(qty) && qty > 0 && Number.isFinite(total) && total > 0;
-  const trimmedNote = (note || '').trim();
-
-  if (hasPromo && trimmedNote) {
-    return `Promo: ${qty} x $${total.toFixed(2)} — ${trimmedNote}`;
-  }
-  if (hasPromo) {
-    return `Promo: ${qty} x $${total.toFixed(2)}`;
-  }
-  return trimmedNote || undefined;
-}
+export { formatPromoDescription, isBulkEligibleProduct };
 
 interface BulkProductCreateFormProps {
   initialName?: string;
@@ -53,6 +34,8 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
   const defaultCat =
     initialGroup === 'verdes' && categories.includes('Frutas y Verduras')
       ? 'Frutas y Verduras'
+      : initialGroup === 'papeleria' && categories.includes('Hogar')
+      ? 'Hogar'
       : categories[0] || 'Abarrotes';
 
   const [name, setName] = useState(initialName);
@@ -66,6 +49,7 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
   const [salePrice, setSalePrice] = useState('0.50');
   const [costPrice, setCostPrice] = useState('0.00');
   const [stock, setStock] = useState('0');
+  const [comboName, setComboName] = useState('');
   const [comboQty, setComboQty] = useState('');
   const [comboTotal, setComboTotal] = useState('');
   const [note, setNote] = useState('');
@@ -121,7 +105,7 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
 
     const codePrefix = unit === 'UNIDAD' && !hasValidCombo && !allowFraction ? 'SINCOD' : 'GRN';
     const generatedCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
-    const description = formatPromoDescription(comboQty, comboTotal, note);
+    const description = formatPromoDescription(comboQty, comboTotal, note, comboName);
 
     try {
       const created = await addProduct({
@@ -305,7 +289,19 @@ export const BulkProductCreateForm: React.FC<BulkProductCreateFormProps> = ({
               <Tag className="w-3.5 h-3.5" />
               <span>Combo promocional (Opcional)</span>
             </span>
-            <span className="text-[10px] text-[var(--ui-muted)]">Ej: 6 × $1.00, 3 × $0.50</span>
+            <span className="text-[10px] text-[var(--ui-muted)]">Ej: Cubeta 30 × $4.50</span>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-[var(--ui-secondary)] mb-1">
+              Nombre del combo (Opcional)
+            </label>
+            <input
+              type="text"
+              value={comboName}
+              onChange={(e) => setComboName(e.target.value)}
+              placeholder="Ej: Cubeta de huevos, Media docena, Paquete..."
+              className="w-full px-3 py-1.5 bg-[var(--ui-surface)] border border-[var(--ui-border)] rounded-lg text-xs text-[var(--ui-text)] outline-none"
+            />
           </div>
           <div className="grid grid-cols-2 gap-2.5">
             <div>

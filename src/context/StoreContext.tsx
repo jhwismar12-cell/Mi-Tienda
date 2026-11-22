@@ -105,6 +105,7 @@ export interface StoreContextType {
   setCountedCash: (amount: number) => void;
   updateInitialCash: (amount: number) => Promise<void>;
   addCashMovement: (type: 'RETIRO' | 'INGRESO', description: string, amount: number) => Promise<void>;
+  deleteCashMovement: (movementId: string) => Promise<void>;
   closeShiftAndGenerateReport: () => void;
   closeShift: (countedCash: number, observations?: string) => Promise<void>;
   openShift: (initialCash: number, cashierName: string) => Promise<void>;
@@ -219,6 +220,8 @@ function mapBackendKardex(bk: BackendKardexMovement): KardexMovement {
     responsible: bk.usuario_nombre || 'Admin',
     quantityChange: bk.cantidad,
     balance: bk.stock_posterior,
+    costUnit: bk.costo_unitario,
+    salePriceUnit: bk.precio_venta_unitario,
     notes: bk.observacion || undefined
   };
 }
@@ -1452,6 +1455,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const deleteCashMovement = async (movementId: string) => {
+    const cleanId = parseInt(movementId.replace(/^c-/, ''), 10);
+    if (!Number.isFinite(cleanId)) return;
+    try {
+      const backendShift = await api.eliminarMovimientoCaja(cleanId);
+      setCashShift(mapBackendCashSession(backendShift));
+      showToast('Movimiento de caja eliminado y arqueo recalculado');
+    } catch (error) {
+      showToast(`No se pudo eliminar el movimiento: ${error instanceof Error ? error.message : 'Error de conexión'}`);
+      throw error;
+    }
+  };
+
   const closeShiftAndGenerateReport = () => {
     setIsReportZModalOpen(true);
   };
@@ -1721,6 +1737,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setCountedCash,
         updateInitialCash,
         addCashMovement,
+        deleteCashMovement,
         closeShiftAndGenerateReport,
         closeShift,
         openShift,

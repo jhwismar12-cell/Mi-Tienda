@@ -1293,6 +1293,10 @@ export const InventoryScreen: React.FC = () => {
                   const isVenta = mov.type === 'VENTA';
                   const isCompra = mov.type === 'COMPRA';
                   const isDevolucion = mov.type === 'DEVOLUCION_CLIENTE' || mov.type === 'DEVOLUCION';
+                  const movPvp =
+                    typeof mov.salePriceUnit === 'number' && Number.isFinite(mov.salePriceUnit)
+                      ? mov.salePriceUnit
+                      : selectedProduct?.salePrice ?? 0;
 
                   return (
                     <div
@@ -1346,9 +1350,12 @@ export const InventoryScreen: React.FC = () => {
                         {mov.notes || 'Operación regular'}
                       </div>
 
-                      <div className="flex justify-between items-center text-[10px] text-[var(--ui-muted)] font-mono border-t border-dashed border-[var(--ui-border)] pt-1.5 mt-1.5">
+                      <div className="flex justify-between items-center text-[10px] text-[var(--ui-muted)] font-mono border-t border-dashed border-[var(--ui-border)] pt-1.5 mt-1.5 gap-2">
                         <span>{mov.date} {mov.time}</span>
-                        <span>Balance: <strong className="text-[var(--ui-text)]">{mov.balance} un</strong></span>
+                        <div className="flex items-center gap-2.5">
+                          <span>PVP: <strong className="text-[var(--ui-brand-strong)]">${movPvp.toFixed(2)}</strong></span>
+                          <span>Balance: <strong className="text-[var(--ui-text)]">{mov.balance} un</strong></span>
+                        </div>
                       </div>
                     </div>
                   );

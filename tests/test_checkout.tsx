@@ -15,6 +15,8 @@ import {
 } from '../src/components/pos/BulkProductCreateForm';
 import { SupplierSearchModal } from '../src/components/pos/SupplierSearchModal';
 import { PosScreen } from '../src/components/pos/PosScreen';
+import { KardexScreen } from '../src/components/kardex/KardexScreen';
+import { DashboardScreen } from '../src/components/reports/DashboardScreen';
 import { GlobalSearchModal } from '../src/components/modals/GlobalSearchModal';
 import { BarcodeCameraModal, createBarcodeReader } from '../src/components/modals/BarcodeCameraModal';
 import { InventoryScreen } from '../src/components/inventory/InventoryScreen';
@@ -2204,4 +2206,140 @@ test('PosScreen hides Por Proveedor controls and BulkSaleModal filters Tabacos, 
   cards = visibleCardTitles();
   assert.equal(cards.length, 1);
   assert.ok(cards[0].includes('Tomate'));
+});
+
+test('BulkSaleModal supports named multi-combos, Papeleria tab, multi-item stay-open with Listos button, Kardex PVP, and Reportes withdrawal UI', async (t) => {
+  let savedUpdatePayload: any = null;
+  const eggBp: BackendProduct = {
+    id_producto: 301, id_categoria: 1, categoria_nombre: 'Abarrotes',
+    codigo_interno: 'GRN-HUV-UNI', nombre: 'Huevo', descripcion: 'Promo: 6 x $1.00',
+    unidad_medida: 'UNIDAD', precio_compra_actual: 0.11, precio_venta_actual: 0.15,
+    margen_minimo_porcentaje: 20, stock_minimo: 6, stock_actual: 60,
+    permite_fraccion: false, activo: true, codigos_barras: []
+  };
+  const eraserBp: BackendProduct = {
+    id_producto: 302, id_categoria: 9, categoria_nombre: 'Hogar', id_proveedor: 12,
+    proveedor_nombre: 'Xavier (Papelería)', codigo_interno: 'AUT-736982',
+    nombre: 'BORRADOR NEGRO TRIANGULAR', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 0.15, precio_venta_actual: 0.25,
+    margen_minimo_porcentaje: 20, stock_minimo: 5, stock_actual: 12,
+    permite_fraccion: false, activo: true, codigos_barras: ['7861000009']
+  };
+  const paperBp: BackendProduct = {
+    id_producto: 303, id_categoria: 9, categoria_nombre: 'Hogar', id_proveedor: 12,
+    proveedor_nombre: 'Xavier (Papelería)', codigo_interno: 'AUT-355204',
+    nombre: 'CAJA SACAPUNTAS', unidad_medida: 'UNIDAD',
+    precio_compra_actual: 0.08, precio_venta_actual: 0.15,
+    margen_minimo_porcentaje: 20, stock_minimo: 5, stock_actual: 10,
+    permite_fraccion: false, activo: true, codigos_barras: []
+  };
+
+  t.mock.method(api, 'getProductos', async () => [eggBp, eraserBp, paperBp]);
+  t.mock.method(api, 'actualizarProducto', async (_id: number, payload: any) => {
+    savedUpdatePayload = payload;
+    return { ...eggBp, descripcion: payload.descripcion };
+  });
+  t.mock.method(api, 'getKardexGeneral', async () => [
+    {
+      id_movimiento: 501,
+      fecha_hora: '2026-11-22 10:15:00',
+      id_producto: 301,
+      producto_nombre: 'Huevo',
+      producto_codigo: 'GRN-HUV-UNI',
+      tipo_movimiento: 'SALIDA_VENTA',
+      cantidad: -30,
+      stock_anterior: 60,
+      stock_posterior: 30,
+      costo_unitario: 0.11,
+      precio_venta_unitario: 0.15,
+      referencia_id: 'TK-99',
+      id_usuario: 1,
+      usuario_nombre: 'Admin',
+      observacion: 'Cubeta de huevos'
+    }
+  ]);
+
+  const textOf = (node: any): string =>
+    typeof node === 'string' || typeof node === 'number'
+      ? String(node)
+      : Array.isArray(node?.children)
+      ? node.children.map(textOf).join('')
+      : '';
+
+  let closeCount = 0;
+  await act(async () => {
+    await store.refreshProducts();
+    await store.refreshKardex();
+    store.clearCart();
+    renderer.update(<StoreProvider><Probe /><BulkSaleModal isOpen={true} onClose={() => { closeCount += 1; }} /></StoreProvider>);
+  });
+
+  // 1. Papelería tab contains Borrador and Sacapuntas
+  const papTab = renderer.root.findAllByType('button').find(b => b.props.role === 'tab' && textOf(b).includes('Papelería'));
+  assert.ok(papTab, 'Expected Papelería subcategory tab in BulkSaleModal');
+  await act(async () => { papTab.props.onClick(); });
+  const papCards = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer'))
+    .map(n => textOf(n));
+  assert.equal(papCards.length, 2);
+  assert.ok(papCards.some(c => c.includes('BORRADOR NEGRO TRIANGULAR')));
+  assert.ok(papCards.some(c => c.includes('CAJA SACAPUNTAS')));
+
+  // 2. Switch to Todos, select Huevo, add named combo "Cubeta de huevos" (30 x $4.50)
+  const todosTab = renderer.root.findAllByType('button').find(b => b.props.role === 'tab' && textOf(b).includes('Todos'));
+  await act(async () => { todosTab!.props.onClick(); });
+  const eggCard = renderer.root
+    .findAll(n => n.type === 'div' && typeof n.props?.onClick === 'function' && String(n.props?.className || '').includes('cursor-pointer') && textOf(n).includes('Huevo'))[0];
+  await act(async () => { eggCard.props.onClick(); });
+
+  const addComboBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Agregar Combo'));
+  assert.ok(addComboBtn, 'Expected Agregar Combo button in BulkSaleModal');
+  await act(async () => { addComboBtn.props.onClick(); });
+
+  const nameInput = renderer.root.findByProps({ placeholder: 'Ej: Cubeta de huevos, Media docena, Paquete...' });
+  const qtyInput = renderer.root.findByProps({ placeholder: 'Ej: 30' });
+  const priceInput = renderer.root.findByProps({ placeholder: 'Ej: 4.50' });
+  await act(async () => {
+    nameInput.props.onChange({ target: { value: 'Cubeta de huevos' } });
+    qtyInput.props.onChange({ target: { value: '30' } });
+    priceInput.props.onChange({ target: { value: '4.50' } });
+  });
+  const comboForm = renderer.root.findByType('form');
+  await act(async () => {
+    await comboForm.props.onSubmit({ preventDefault() {} });
+  });
+
+  assert.equal(savedUpdatePayload?.descripcion, 'Promo: 6 x $1.00 | Promo: Cubeta de huevos (30 x $4.50)');
+
+  // 3. Adding BOTH combos keeps modal OPEN (closeCount === 0), until clicking "Productos de Granel Listos"
+  const cubetaBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Cubeta de huevos (30 × $4.50)'));
+  assert.ok(cubetaBtn, 'Expected saved Cubeta combo button');
+  await act(async () => { cubetaBtn.props.onClick({ stopPropagation() {} }); });
+  assert.equal(closeCount, 0, 'Modal must stay open after adding first bulk item');
+  assert.equal(store.cart.length, 1);
+  assert.equal(store.cart[0].quantity, 30);
+  assert.equal(store.cart[0].subtotal, 4.50);
+
+  const listosBtn = renderer.root.findAllByType('button').find(b => textOf(b).includes('Productos de Granel Listos'));
+  assert.ok(listosBtn, 'Expected Productos de Granel Listos button');
+  await act(async () => { listosBtn.props.onClick(); });
+  assert.equal(closeCount, 1, 'Clicking Productos de Granel Listos should close the modal');
+
+  // 4. KardexScreen displays PVP column ($0.15 and Tot: $4.50)
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><KardexScreen /></StoreProvider>);
+  });
+  const kardexText = textOf(renderer.toJSON());
+  assert.ok(kardexText.includes('PVP'), 'Expected PVP header in KardexScreen');
+  assert.ok(kardexText.includes('$0.15'), 'Expected unit PVP in KardexScreen');
+  assert.ok(kardexText.includes('Tot: $4.50'), 'Expected total PVP for multi-unit sale in KardexScreen');
+
+  // 5. DashboardScreen (Reportes) displays prominent Retirar dinero button inside Arqueo
+  t.mock.method(api, 'getDashboard', async () => null as any);
+  t.mock.method(api, 'getHistorialCaja', async () => []);
+  await act(async () => {
+    renderer.update(<StoreProvider><Probe /><DashboardScreen /></StoreProvider>);
+  });
+  const dashText = textOf(renderer.toJSON());
+  assert.ok(dashText.includes('Retirar dinero'), 'Expected Retirar dinero button in Reportes Arqueo');
 });

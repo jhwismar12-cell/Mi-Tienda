@@ -570,6 +570,13 @@ def registrar_movimiento_caja(data: CajaMovimientoRequest, current_user: UserInf
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.delete("/api/caja/movimiento/{id_movimiento_caja}", response_model=SesionCajaOut, tags=["Caja"])
+def eliminar_movimiento_caja_endpoint(id_movimiento_caja: int, _admin: UserInfo = Depends(require_admin)):
+    try:
+        return services.eliminar_movimiento_caja(id_movimiento_caja)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.put("/api/caja/fondo-inicial", response_model=SesionCajaOut, tags=["Caja"])
 def actualizar_fondo_inicial_endpoint(data: dict = Body(...), current_user: UserInfo = Depends(get_current_user)):
     monto = float(data.get("monto_inicial", 0.0))

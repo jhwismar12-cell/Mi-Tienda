@@ -638,6 +638,39 @@ def registrar_movimiento_caja(data: CajaMovimientoRequest) -> SesionCajaOut:
             )
     return obtener_caja_activa()
 
+def eliminar_movimiento_caja(id_movimiento_caja: int) -> SesionCajaOut:
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        active = require_active_session(conn)
+        sid = active["IDSesionCaja"]
+
+        mov = cursor.execute(
+            "SELECT * FROM MOVIMIENTOS_CAJA WHERE IDMovimientoCaja = ? AND IDSesionCaja = ?",
+            (id_movimiento_caja, sid),
+        ).fetchone()
+        if not mov:
+            raise ValueError("Movimiento de caja no encontrado en el turno activo.")
+
+        monto = float(mov["Monto"])
+        cursor.execute("DELETE FROM MOVIMIENTOS_CAJA WHERE IDMovimientoCaja = ?", (id_movimiento_caja,))
+        if mov["Tipo"] == "RETIRO":
+            cursor.execute(
+                """UPDATE SESIONES_CAJA
+                   SET TotalRetiros = MAX(0, TotalRetiros - ?),
+                       TotalEsperado = TotalEsperado + ?
+                   WHERE IDSesionCaja = ?""",
+                (monto, monto, sid),
+            )
+        else:
+            cursor.execute(
+                """UPDATE SESIONES_CAJA
+                   SET TotalEsperado = TotalEsperado - ?
+                   WHERE IDSesionCaja = ?""",
+                (monto, sid),
+            )
+    return obtener_caja_activa()
+
 def actualizar_fondo_inicial(monto_inicial: float, id_usuario: int = 1) -> SesionCajaOut:
     with get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -1229,10 +1262,24 @@ def ajustar_inventario(data: AjusteInventarioRequest) -> KardexMovimientoOut:
 def obtener_kardex(id_producto: Optional[int] = None, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> List[KardexMovimientoOut]:
     with get_db() as conn:
         cursor = conn.cursor()
-        query = """SELECT m.*, p.Nombre as ProductoNombre, p.CodigoInterno as ProductoCodigo, u.NombreCompleto as UsuarioNombre 
-                   FROM MOVIMIENTOS_INVENTARIO m 
-                   JOIN PRODUCTOS p ON m.IDProducto = p.IDProducto 
-                   JOIN USUARIOS u ON m.IDUsuario = u.IDUsuario 
+        query = """SELECT m.*,
+                          p.Nombre as ProductoNombre,
+                          p.CodigoInterno as ProductoCodigo,
+                          p.PrecioCompraActual as ProductoPrecioCompra,
+                          p.PrecioVentaActual as ProductoPrecioVenta,
+                          (
+                              SELECT vd.PrecioUnitario
+                              FROM VENTAS v
+                              JOIN VENTAS_DETALLE vd ON vd.IDVenta = v.IDVenta
+                              WHERE v.NumeroVenta = m.ReferenciaID
+                                AND vd.IDProducto = m.IDProducto
+                              ORDER BY vd.IDDetalleVenta DESC
+                              LIMIT 1
+                          ) as VentaPrecioUnitario,
+                          u.NombreCompleto as UsuarioNombre
+                   FROM MOVIMIENTOS_INVENTARIO m
+                   JOIN PRODUCTOS p ON m.IDProducto = p.IDProducto
+                   JOIN USUARIOS u ON m.IDUsuario = u.IDUsuario
                    WHERE 1=1"""
         params = []
         if id_producto:
@@ -1249,24 +1296,30 @@ def obtener_kardex(id_producto: Optional[int] = None, fecha_inicio: Optional[str
         cursor.execute(query, params)
         rows = cursor.fetchall()
 
-        return [
-            KardexMovimientoOut(
-                id_movimiento=r["IDMovimiento"],
-                fecha_hora=str(r["FechaHora"]),
-                id_producto=r["IDProducto"],
-                producto_nombre=r["ProductoNombre"],
-                producto_codigo=r["ProductoCodigo"],
-                tipo_movimiento=r["TipoMovimiento"],
-                cantidad=float(r["Cantidad"]),
-                stock_anterior=float(r["StockAnterior"]),
-                stock_posterior=float(r["StockPosterior"]),
-                referencia_id=r["ReferenciaID"],
-                id_usuario=r["IDUsuario"],
-                usuario_nombre=r["UsuarioNombre"],
-                observacion=r["Observacion"]
+        results = []
+        for r in rows:
+            is_sale = r["TipoMovimiento"] in ("VENTA", "SALIDA_VENTA")
+            sale_pvp = r["VentaPrecioUnitario"] if (is_sale and r["VentaPrecioUnitario"] is not None) else r["ProductoPrecioVenta"]
+            results.append(
+                KardexMovimientoOut(
+                    id_movimiento=r["IDMovimiento"],
+                    fecha_hora=str(r["FechaHora"]),
+                    id_producto=r["IDProducto"],
+                    producto_nombre=r["ProductoNombre"],
+                    producto_codigo=r["ProductoCodigo"],
+                    tipo_movimiento=r["TipoMovimiento"],
+                    cantidad=float(r["Cantidad"]),
+                    stock_anterior=float(r["StockAnterior"]),
+                    stock_posterior=float(r["StockPosterior"]),
+                    costo_unitario=round(float(r["ProductoPrecioCompra"] or 0.0), 4),
+                    precio_venta_unitario=round(float(sale_pvp or 0.0), 4),
+                    referencia_id=r["ReferenciaID"],
+                    id_usuario=r["IDUsuario"],
+                    usuario_nombre=r["UsuarioNombre"],
+                    observacion=r["Observacion"]
+                )
             )
-            for r in rows
-        ]
+        return results
 
 # --- Dashboard KPIs ---
 def obtener_dashboard_kpis(

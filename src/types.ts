@@ -135,6 +135,7 @@ export interface KardexMovement {
   balance: number;
   notes?: string;
   costUnit?: number;
+  salePriceUnit?: number;
 }
 
 export interface ReceptionDraftItem {

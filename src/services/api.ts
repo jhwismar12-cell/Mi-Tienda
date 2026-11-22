@@ -65,6 +65,8 @@ export interface BackendKardexMovement {
   cantidad: number;
   stock_anterior: number;
   stock_posterior: number;
+  costo_unitario?: number;
+  precio_venta_unitario?: number;
   referencia_id?: string;
   id_usuario: number;
   usuario_nombre?: string;
@@ -398,6 +400,11 @@ export const api = {
     request<BackendCashSession>('/caja/movimiento', {
       method: 'POST',
       body: JSON.stringify({ tipo, monto, descripcion })
+    }),
+
+  eliminarMovimientoCaja: (idMovimientoCaja: number) =>
+    request<BackendCashSession>(`/caja/movimiento/${idMovimientoCaja}`, {
+      method: 'DELETE'
     }),
 
   actualizarFondoInicial: (montoInicial: number, idUsuario: number = 1) =>

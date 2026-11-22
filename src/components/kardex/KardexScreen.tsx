@@ -38,10 +38,18 @@ export const KardexScreen: React.FC = () => {
   const enrichedMovements = useMemo(() => {
     return kardexMovements.map(mov => {
       const product = products.find(p => p.id === mov.productId);
+      const salePrice =
+        typeof mov.salePriceUnit === 'number' && Number.isFinite(mov.salePriceUnit)
+          ? mov.salePriceUnit
+          : product
+          ? product.salePrice
+          : 0;
       return {
         ...mov,
         productName: product ? product.name : 'Producto General',
-        productCode: product ? product.code : 'S/C'
+        productCode: product ? product.code : 'S/C',
+        salePrice,
+        totalPvp: Number((Math.abs(mov.quantityChange) * salePrice).toFixed(2))
       };
     });
   }, [kardexMovements, products]);
@@ -62,11 +70,11 @@ export const KardexScreen: React.FC = () => {
   }, [enrichedMovements, searchQuery, selectedType, selectedProductFilter]);
 
   const handleExportKardex = () => {
-    const headers = 'Fecha,Hora,Código,Producto,Tipo,Documento,Responsable,Cantidad,Saldo,Costo Unit,Notas\n';
+    const headers = 'Fecha,Hora,Código,Producto,Tipo,Documento,Responsable,Cantidad,PVP Unit,Total PVP,Saldo,Costo Unit,Notas\n';
     const rows = filteredMovements
       .map(
         m =>
-          `"${m.date}","${m.time}","${m.productCode}","${m.productName}","${m.type}","${m.docNumber}","${m.responsible}",${m.quantityChange},${m.balance},${m.costUnit || 0},"${m.notes || ''}"`
+          `"${m.date}","${m.time}","${m.productCode}","${m.productName}","${m.type}","${m.docNumber}","${m.responsible}",${m.quantityChange},${m.salePrice.toFixed(2)},${m.totalPvp.toFixed(2)},${m.balance},${m.costUnit || 0},"${m.notes || ''}"`
       )
       .join('\n');
 
@@ -159,6 +167,7 @@ export const KardexScreen: React.FC = () => {
               <th className="px-4 py-2.5">Doc / Ref</th>
               <th className="px-4 py-2.5">Responsable</th>
               <th className="px-4 py-2.5 text-right">Variación</th>
+              <th className="px-4 py-2.5 text-right">PVP</th>
               <th className="px-4 py-2.5 text-right">Saldo</th>
               <th className="px-4 py-2.5">Observaciones</th>
             </tr>
@@ -166,7 +175,7 @@ export const KardexScreen: React.FC = () => {
           <tbody className="divide-y divide-[var(--ui-border)] text-xs md:text-sm">
             {filteredMovements.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-[var(--ui-subtle)]">
+                <td colSpan={9} className="py-12 text-center text-[var(--ui-subtle)]">
                   No se encontraron registros de Kardex con los filtros seleccionados.
                 </td>
               </tr>
@@ -223,6 +232,18 @@ export const KardexScreen: React.FC = () => {
                         <span className="text-[var(--ui-danger-text)]">{mov.quantityChange}</span>
                       ) : (
                         <span className="text-[var(--ui-muted)]">0</span>
+                      )}
+                    </td>
+
+                    {/* PVP */}
+                    <td className="px-4 py-2.5 text-right font-mono text-xs md:text-sm whitespace-nowrap">
+                      <div className="font-bold text-[var(--ui-brand-strong)]">
+                        ${mov.salePrice.toFixed(2)}
+                      </div>
+                      {Math.abs(mov.quantityChange) !== 1 && mov.totalPvp > 0 && (
+                        <div className="text-[10px] text-[var(--ui-muted)]">
+                          Tot: ${mov.totalPvp.toFixed(2)}
+                        </div>
                       )}
                     </td>
 
